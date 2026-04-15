@@ -20,7 +20,8 @@
     "lucide-react": "^0.383.0",
     "clsx": "^2.1.0",
     "tailwind-merge": "^2.2.0",
-    "resend": "^3.2.0"
+    "resend": "^3.2.0",
+    "@line/liff": "^2.23.3"
   },
   "devDependencies": {
     "typescript": "^5.5.0",

@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronLeft, Sparkles, MessageCircle, Mail, Globe, Check, X, Heart, Share2 } from 'lucide-react';
+import { ChevronLeft, Sparkles, MessageCircle, Mail, Globe, Check, X, Heart, Share2, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { ensureLineLogin, getLineProfile, initLiff } from '@/lib/liff';
 
 // Theme configurations for categories
 const FRIEND_THEMES = {
@@ -21,6 +22,8 @@ type FanStep = 0 | 1 | 2;
 interface FriendFormData {
   theme: string;
   recipient: string;
+  recipientLineUserId?: string;
+  recipientLinePictureUrl?: string;
   wish: string;
   wishPrice: string;
   message: string;
@@ -61,6 +64,48 @@ export default function CampaignNewPage() {
     productUrl: '',
     fanMessage: '',
   });
+
+  const [lineLoading, setLineLoading] = useState(false);
+  const [lineError, setLineError] = useState<string | null>(null);
+  const [recipientManualInput, setRecipientManualInput] = useState(false);
+
+  /**
+   * LINE ログインを起動し、ログインユーザー（=お祝いされる人の代理 or 本人）の
+   * プロファイルを recipient 情報としてフォームにセット。
+   *
+   * 注: LIFFは友達リストAPIを提供しないため、ここでは「受取人本人が
+   * 端末でLINEログインして承認」するのではなく、企画者自身のLINE IDを
+   * 捕捉する過渡的な実装。本番承認フローは /approve ページで行う。
+   *
+   * 簡易モード: ログインなしで手入力も可能にするため、手入力モードへの
+   * 切替リンクも提供する。
+   */
+  const handleLineSelect = async () => {
+    setLineError(null);
+    setLineLoading(true);
+    try {
+      const liff = await initLiff();
+      if (!liff.isLoggedIn()) {
+        await ensureLineLogin(window.location.href);
+        // login() 後は OAuth リダイレクトで戻ってくる
+        return;
+      }
+      const profile = await getLineProfile();
+      if (profile) {
+        setFriendForm({
+          ...friendForm,
+          recipient: profile.displayName,
+          recipientLineUserId: profile.userId,
+          recipientLinePictureUrl: profile.pictureUrl,
+        });
+      }
+    } catch (err: any) {
+      console.error('LINE login error:', err);
+      setLineError(err?.message || 'LINE連携に失敗しました');
+    } finally {
+      setLineLoading(false);
+    }
+  };
 
   const handleFriendNext = () => {
     if (friendStep < 3) setFriendStep((friendStep + 1) as FriendStep);
@@ -194,12 +239,60 @@ export default function CampaignNewPage() {
             <div>
               <h2 className="text-xl font-bold text-gray-900 mb-1">誰の誕生日をお祝いする？</h2>
               <p className="text-sm text-gray-400 mb-6">お祝いする本人をLINEから選んでください</p>
-              <button className="w-full bg-green-500 text-white rounded-2xl py-4 font-bold flex items-center justify-center gap-2 mb-4 hover:bg-green-600 transition-all">
-                <MessageCircle className="w-5 h-5" /> お祝いする人をLINEから選ぶ
-              </button>
+
+              {!recipientManualInput && (
+                <>
+                  <button
+                    onClick={handleLineSelect}
+                    disabled={lineLoading}
+                    className="w-full bg-green-500 text-white rounded-2xl py-4 font-bold flex items-center justify-center gap-2 mb-3 hover:bg-green-600 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {lineLoading ? (
+                      <><Loader2 className="w-5 h-5 animate-spin" /> LINE連携中...</>
+                    ) : (
+                      <><MessageCircle className="w-5 h-5" /> お祝いする人をLINEから選ぶ</>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setRecipientManualInput(true)}
+                    className="w-full text-xs text-gray-500 underline mb-4"
+                  >
+                    LINEを使わず名前を入力する
+                  </button>
+                </>
+              )}
+
+              {recipientManualInput && (
+                <div className="mb-4">
+                  <input
+                    value={friendForm.recipient}
+                    onChange={(e) => setFriendForm({ ...friendForm, recipient: e.target.value })}
+                    placeholder="お祝いする人の名前"
+                    className="w-full px-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-300 mb-2"
+                  />
+                  <button
+                    onClick={() => setRecipientManualInput(false)}
+                    className="text-xs text-gray-500 underline"
+                  >
+                    LINEから選ぶに戻る
+                  </button>
+                </div>
+              )}
+
+              {lineError && (
+                <div className="text-xs text-red-500 mb-3 px-1">{lineError}</div>
+              )}
+
               <div className="bg-green-50 border border-green-100 rounded-xl p-4 mb-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-green-200 flex items-center justify-center text-lg">👩</div>
+                  <div className="w-10 h-10 rounded-full bg-green-200 flex items-center justify-center text-lg overflow-hidden">
+                    {friendForm.recipientLinePictureUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={friendForm.recipientLinePictureUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      '👩'
+                    )}
+                  </div>
                   <div>
                     <div className="font-semibold text-gray-900 text-sm">{friendForm.recipient || '(未選択)'}</div>
                     <div className="text-xs text-green-600">この人をお祝いする</div>
@@ -211,7 +304,7 @@ export default function CampaignNewPage() {
                 <div className="text-xs text-amber-700 leading-relaxed">
                   <span className="font-semibold">🔒 なぜLINE承認が必要？</span>
                   <br />
-                  選んだ相手にお祝いページの承認リクエストが届きます。本人が承認することでなりすましを防ぎ、
+                  公開後、本人に承認リクエストが届きます。本人が承認することでなりすましを防ぎ、
                   eギフトが確実に届きます。
                 </div>
               </div>
