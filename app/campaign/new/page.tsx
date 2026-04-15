@@ -4,6 +4,12 @@ import { useEffect, useState } from 'react';
 import { ChevronLeft, Sparkles, MessageCircle, Mail, Globe, Check, X, Heart, Share2, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { ensureLineLogin, getLineProfile, initLiff } from '@/lib/liff';
+import {
+  upsertUserFromLineProfile,
+  createFriendCampaign,
+  createFanCampaign,
+} from '@/lib/actions';
+import type { CampaignCategory } from '@/lib/supabase/types';
 
 // LIFFログインリダイレクト後の state 復元キー
 const CB_STATE_KEY = 'cb_campaign_state';
@@ -71,6 +77,8 @@ export default function CampaignNewPage() {
 
   const [lineLoading, setLineLoading] = useState(false);
   const [lineError, setLineError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   /**
    * ファンモード用: 企画者本人の LINE プロファイルを取得して fanForm に反映。
@@ -125,18 +133,33 @@ export default function CampaignNewPage() {
 
   /**
    * OAuth リダイレクト後の state 復元 + プロファイル反映
+   *
+   * 友達モード/ファンモードどちらでも、リダイレクト直前に sessionStorage に
+   * モード・ステップ・フォーム内容を保存しているので、復元する。
    */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (!params.has('code')) return; // 通常アクセスなら何もしない
 
     const raw = sessionStorage.getItem(CB_STATE_KEY);
+    let restoredMode: PageMode | null = null;
     if (raw) {
       try {
-        const saved = JSON.parse(raw) as { mode: PageMode; step: number };
+        const saved = JSON.parse(raw) as {
+          mode: PageMode;
+          step: number;
+          friendForm?: FriendFormData;
+          fanForm?: FanFormData;
+        };
+        restoredMode = saved.mode;
         if (saved.mode === 'fanMode') {
           setPageMode('fanMode');
           setFanStep((saved.step as FanStep) ?? 0);
+          if (saved.fanForm) setFanForm(saved.fanForm);
+        } else if (saved.mode === 'friendMode') {
+          setPageMode('friendMode');
+          setFriendStep((saved.step as FriendStep) ?? 0);
+          if (saved.friendForm) setFriendForm(saved.friendForm);
         }
       } catch {
         /* ignore */
@@ -144,12 +167,14 @@ export default function CampaignNewPage() {
       sessionStorage.removeItem(CB_STATE_KEY);
     }
 
-    // LIFF 初期化 → プロファイル反映
+    // LIFF 初期化 → プロファイル反映 (ファンモード時のみフォーム反映)
     (async () => {
       setLineLoading(true);
       try {
         await initLiff();
-        await applyLineProfileToFanForm();
+        if (restoredMode === 'fanMode') {
+          await applyLineProfileToFanForm();
+        }
         // URL からクエリ除去
         window.history.replaceState({}, '', '/campaign/new');
       } catch (err: any) {
@@ -160,6 +185,114 @@ export default function CampaignNewPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * 友達モードの公開処理
+   *
+   * 流れ:
+   *   1. 企画者本人のLINE認証を確保（未ログインならリダイレクト＋state保存）
+   *   2. LINE プロファイルを Supabase users に upsert → organizer_id を取得
+   *   3. createFriendCampaign を呼んで campaign + approval(token) を作成
+   *   4. share ページに token 付きで遷移
+   */
+  const handleFriendSubmit = async () => {
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      // 1. 企画者の LINE 認証
+      const liff = await initLiff();
+      if (!liff.isLoggedIn()) {
+        sessionStorage.setItem(
+          CB_STATE_KEY,
+          JSON.stringify({
+            mode: 'friendMode',
+            step: friendStep,
+            friendForm,
+          })
+        );
+        await ensureLineLogin(window.location.href);
+        return;
+      }
+
+      const profile = await getLineProfile();
+      if (!profile) throw new Error('LINEプロファイルを取得できませんでした');
+
+      // 2. ユーザー upsert
+      const userRes = await upsertUserFromLineProfile({
+        lineUserId: profile.userId,
+        displayName: profile.displayName,
+        pictureUrl: profile.pictureUrl,
+      });
+      if (!userRes.success) throw new Error(userRes.error || 'ユーザー作成に失敗しました');
+
+      // 3. キャンペーン作成
+      const result = await createFriendCampaign({
+        organizerId: userRes.userId,
+        recipientName: friendForm.recipient,
+        category: friendForm.theme as CampaignCategory,
+        wishItem: friendForm.wish || undefined,
+        wishPrice: friendForm.wishPrice ? Number(friendForm.wishPrice) : undefined,
+        description: friendForm.message,
+      });
+
+      if (!result.success) throw new Error(result.error || 'キャンペーン作成に失敗しました');
+
+      // 4. share ページに遷移（approvalToken は受取人へのリンク生成に使う）
+      router.push(
+        `/campaign/${result.id}/share?token=${encodeURIComponent(result.approvalToken)}&mode=friend`
+      );
+    } catch (err: any) {
+      console.error('Friend submit error:', err);
+      setSubmitError(err?.message || '公開処理に失敗しました');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * ファンモードの公開処理
+   *
+   * 流れ:
+   *   1. LINE プロファイル必須（fanForm に既に保持済みのはず）
+   *   2. users upsert → organizer_id 取得
+   *   3. createFanCampaign（active 状態で作成）
+   *   4. share ページへ遷移
+   */
+  const handleFanSubmit = async () => {
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      if (!fanForm.lineUserId || !fanForm.lineDisplayName) {
+        throw new Error('Step1 で LINE 連携を完了してください');
+      }
+
+      const userRes = await upsertUserFromLineProfile({
+        lineUserId: fanForm.lineUserId,
+        displayName: fanForm.lineDisplayName,
+        pictureUrl: fanForm.linePictureUrl,
+      });
+      if (!userRes.success) throw new Error(userRes.error || 'ユーザー作成に失敗しました');
+
+      const result = await createFanCampaign({
+        organizerId: userRes.userId,
+        category: 'birthday' as CampaignCategory, // ファンモードはカテゴリ未選択なのでデフォルト
+        wishItem: fanForm.wishItem,
+        wishPrice: fanForm.targetAmount ? Number(fanForm.targetAmount) : undefined,
+        description: fanForm.fanMessage,
+      });
+
+      if (!result.success) throw new Error(result.error || 'キャンペーン作成に失敗しました');
+
+      router.push(
+        `/campaign/${result.id}/share?mode=fan&slug=${encodeURIComponent(result.slug)}`
+      );
+    } catch (err: any) {
+      console.error('Fan submit error:', err);
+      setSubmitError(err?.message || '公開処理に失敗しました');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleFriendNext = () => {
     if (friendStep < 3) setFriendStep((friendStep + 1) as FriendStep);
@@ -361,12 +494,22 @@ export default function CampaignNewPage() {
               次へ
             </button>
           ) : (
-            <button
-              onClick={() => setPageMode('modeSelect')}
-              className="w-full py-4 rounded-2xl font-bold text-lg bg-gradient-to-r from-pink-500 to-rose-400 text-white hover:shadow-lg transition-all flex items-center justify-center gap-2"
-            >
-              <Sparkles className="w-5 h-5" /> 承認リクエストを送る
-            </button>
+            <>
+              {submitError && (
+                <div className="text-xs text-red-500 mb-2 px-1">{submitError}</div>
+              )}
+              <button
+                onClick={handleFriendSubmit}
+                disabled={submitting || !friendForm.recipient}
+                className="w-full py-4 rounded-2xl font-bold text-lg bg-gradient-to-r from-pink-500 to-rose-400 text-white hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {submitting ? (
+                  <><Loader2 className="w-5 h-5 animate-spin" /> 送信中...</>
+                ) : (
+                  <><Sparkles className="w-5 h-5" /> 承認リクエストを送る</>
+                )}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -549,12 +692,22 @@ export default function CampaignNewPage() {
               次へ
             </button>
           ) : (
-            <button
-              onClick={() => setPageMode('modeSelect')}
-              className="w-full py-4 rounded-2xl font-bold text-lg bg-gradient-to-r from-violet-500 to-purple-400 text-white hover:shadow-lg transition-all flex items-center justify-center gap-2"
-            >
-              <Sparkles className="w-5 h-5" /> ページを公開する
-            </button>
+            <>
+              {submitError && (
+                <div className="text-xs text-red-500 mb-2 px-1">{submitError}</div>
+              )}
+              <button
+                onClick={handleFanSubmit}
+                disabled={submitting || !fanForm.accountConnected || !fanForm.wishItem}
+                className="w-full py-4 rounded-2xl font-bold text-lg bg-gradient-to-r from-violet-500 to-purple-400 text-white hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {submitting ? (
+                  <><Loader2 className="w-5 h-5 animate-spin" /> 送信中...</>
+                ) : (
+                  <><Sparkles className="w-5 h-5" /> ページを公開する</>
+                )}
+              </button>
+            </>
           )}
         </div>
       </div>

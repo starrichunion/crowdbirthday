@@ -16,12 +16,102 @@ import { createPaymentSession, handlePaymentComplete } from '@/lib/stripe';
 import { redirect } from 'next/navigation';
 
 // ============================================================================
+// USER (LINE PROFILE)
+// ============================================================================
+
+/**
+ * LINEプロファイルから users レコードを upsert し、Supabase の user UUID を返す。
+ *
+ * 設計意図:
+ *   - LIFF だけでログインしているユーザーは Supabase Auth に存在しないため、
+ *     `users` テーブルに line_user_id をキーとして直接レコードを作成・更新する。
+ *   - キャンペーン作成時に必須の `organizer_id` を払い出すために使う。
+ *
+ * email が無い場合は line_user_id をベースに合成のダミーアドレスを生成
+ * （unique 制約を満たすため）。後で本人がメール登録すれば上書きされる想定。
+ */
+export async function upsertUserFromLineProfile(profile: {
+  lineUserId: string;
+  displayName: string;
+  pictureUrl?: string | null;
+  email?: string | null;
+}): Promise<{ userId: string; success: boolean; error?: string }> {
+  try {
+    const supabase = await createServerClient();
+
+    // 既存ユーザーを line_user_id で検索
+    const { data: existing, error: findError } = await supabase
+      .from('users' as any)
+      .select('id, display_name, avatar_url')
+      .eq('line_user_id', profile.lineUserId)
+      .maybeSingle();
+
+    if (findError) throw findError;
+
+    if (existing) {
+      // 表示名/アバターを更新
+      const { error: updateError } = await supabase
+        .from('users' as any)
+        .update({
+          display_name: profile.displayName,
+          avatar_url: profile.pictureUrl ?? null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+
+      if (updateError) throw updateError;
+
+      return { userId: existing.id, success: true };
+    }
+
+    // 新規作成。email が無ければ line_user_id ベースのダミーを使う
+    const email =
+      profile.email && profile.email.length > 0
+        ? profile.email
+        : `line_${profile.lineUserId}@line.local`;
+
+    const { data: created, error: insertError } = await supabase
+      .from('users' as any)
+      .insert([
+        {
+          line_user_id: profile.lineUserId,
+          display_name: profile.displayName,
+          avatar_url: profile.pictureUrl ?? null,
+          email,
+          provider: 'line',
+          is_creator: true,
+        },
+      ])
+      .select('id')
+      .single();
+
+    if (insertError) throw insertError;
+
+    return { userId: created.id, success: true };
+  } catch (error) {
+    console.error('Error upserting user from LINE profile:', error);
+    return {
+      userId: '',
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : 'Failed to upsert user from LINE profile',
+    };
+  }
+}
+
+// ============================================================================
 // CAMPAIGN CREATION
 // ============================================================================
 
 export async function createFriendCampaign(formData: {
   organizerId: string;
-  recipientLineUserId: string;
+  /**
+   * 受取人の LINE userId。新フローでは作成時点では未確定なので任意。
+   * `/approve/[token]` で本人が LINE 認証した時に approvals レコードに反映される。
+   */
+  recipientLineUserId?: string;
   recipientName: string;
   category: CampaignCategory;
   wishItem?: string;
@@ -59,12 +149,14 @@ export async function createFriendCampaign(formData: {
     if (campaignError) throw campaignError;
 
     // Create approval record with token
+    // recipient_line_user_id は NOT NULL なので、未確定時は空文字でプレースホルダ。
+    // 本人が /approve/[token] で LINE 認証した時に上書きする。
     const { data: approval, error: approvalError } = await supabase
       .from('approvals')
       .insert([
         {
           campaign_id: campaign.id,
-          recipient_line_user_id: formData.recipientLineUserId,
+          recipient_line_user_id: formData.recipientLineUserId || '',
           status: 'pending',
         },
       ])

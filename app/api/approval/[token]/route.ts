@@ -10,6 +10,12 @@ import { sendApprovalRequestEmail } from '@/lib/email';
 
 interface ApprovalRequestBody {
   recipientEmail?: string;
+  /** LIFF で取得した受取人本人の LINE userId（後から確定するため任意） */
+  recipientLineUserId?: string;
+  /** LINE 表示名（users レコード新規作成時に使用） */
+  recipientDisplayName?: string;
+  /** LINE プロフィール画像 URL */
+  recipientPictureUrl?: string;
 }
 
 export async function GET(
@@ -99,6 +105,9 @@ export async function POST(
     const token = params.token;
     const body: ApprovalRequestBody = await request.json();
     const recipientEmail = body.recipientEmail;
+    const recipientLineUserId = body.recipientLineUserId;
+    const recipientDisplayName = body.recipientDisplayName;
+    const recipientPictureUrl = body.recipientPictureUrl;
 
     if (!recipientEmail) {
       return NextResponse.json(
@@ -131,13 +140,17 @@ export async function POST(
       );
     }
 
-    // Update approval status
+    // Update approval status (LIFFで取得した受取人のLINE userIdをここで反映)
+    const approvalUpdate: Record<string, any> = {
+      status: 'approved',
+      approved_at: new Date().toISOString(),
+    };
+    if (recipientLineUserId) {
+      approvalUpdate.recipient_line_user_id = recipientLineUserId;
+    }
     const { error: updateApprovalError } = await supabase
       .from('approvals' as any)
-      .update({
-        status: 'approved',
-        approved_at: new Date().toISOString(),
-      })
+      .update(approvalUpdate)
       .eq('token', token);
 
     if (updateApprovalError) {
@@ -156,18 +169,49 @@ export async function POST(
     }
 
     // Create or update recipient user record with email
-    const { data: existingUser, error: checkUserError } = await supabase
-      .from('users' as any)
-      .select('id')
-      .eq('line_user_id', approval.recipient_line_user_id)
-      .single();
+    // 優先度: POSTで渡された recipientLineUserId > approval に保存済みのもの
+    const lineUserIdForLookup =
+      recipientLineUserId || approval.recipient_line_user_id;
 
-    if (!checkUserError && existingUser) {
-      // Update existing user with email
-      await supabase
+    let resolvedUserId: string | null = null;
+    if (lineUserIdForLookup) {
+      const { data: existingUser } = await supabase
         .from('users' as any)
-        .update({ egift_email: recipientEmail })
-        .eq('id', existingUser.id);
+        .select('id')
+        .eq('line_user_id', lineUserIdForLookup)
+        .maybeSingle();
+
+      if (existingUser) {
+        await supabase
+          .from('users' as any)
+          .update({
+            egift_email: recipientEmail,
+            ...(recipientDisplayName ? { display_name: recipientDisplayName } : {}),
+            ...(recipientPictureUrl ? { avatar_url: recipientPictureUrl } : {}),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingUser.id);
+        resolvedUserId = existingUser.id;
+      } else {
+        // 新規作成（受取人本人がまだ users に居ない場合）
+        const fallbackEmail = `line_${lineUserIdForLookup}@line.local`;
+        const { data: created } = await supabase
+          .from('users' as any)
+          .insert([
+            {
+              line_user_id: lineUserIdForLookup,
+              display_name: recipientDisplayName || campaign.recipient_name,
+              avatar_url: recipientPictureUrl || null,
+              email: fallbackEmail,
+              egift_email: recipientEmail,
+              provider: 'line',
+              is_creator: false,
+            },
+          ])
+          .select('id')
+          .single();
+        resolvedUserId = created?.id || null;
+      }
     }
 
     // Update campaign: set recipient_id and status to active
@@ -175,7 +219,7 @@ export async function POST(
       .from('campaigns' as any)
       .update({
         status: 'active',
-        recipient_id: existingUser?.id || null,
+        recipient_id: resolvedUserId,
       })
       .eq('id', approval.campaign_id);
 

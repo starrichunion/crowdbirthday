@@ -1,7 +1,46 @@
 /**
  * eGift Service Abstraction
- * Handles purchasing and sending digital gifts
- * Supports multiple providers: Amazon, Giftee, Starbucks, QUOCard Pay
+ * ============================================================================
+ * 各プロバイダー（Amazon, giftee, Starbucks, QUOCard Pay）のAPIを抽象化し、
+ * 共通インターフェース `EGiftProvider` 経由で eギフト購入を扱う。
+ *
+ * ### 本番統合に必要な作業（ステップバイステップ）
+ *
+ * #### Amazon Incentives API
+ *   1. AWS アカウント上で Amazon Incentives API への申し込み
+ *      https://developer.amazon.com/incentives-api
+ *   2. プログラム承認後、AWS IAM で Access Key / Secret Key を発行
+ *   3. 環境変数を設定:
+ *        AMAZON_INCENTIVES_PARTNER_ID=...
+ *        AMAZON_INCENTIVES_ACCESS_KEY=...
+ *        AMAZON_INCENTIVES_SECRET_KEY=...
+ *        AMAZON_INCENTIVES_ENDPOINT=https://agcod-v2-gamma.amazon.com  (sandbox)
+ *                                  https://agcod-v2.amazon.co.jp       (本番JP)
+ *   4. SigV4 署名付きで `CreateGiftCard` エンドポイントを呼び出し:
+ *        POST /CreateGiftCard
+ *        body: { creationRequestId, partnerId, value: { currencyCode, amount } }
+ *      レスポンスから gcClaimCode を取得し、メール本文に挿入。
+ *
+ * #### giftee for Business API
+ *   1. https://giftee.biz/ で法人申し込み・ヒアリング
+ *   2. 契約後、API キーと商品 ID リスト（productCode）を受領
+ *   3. 環境変数:
+ *        GIFTEE_API_KEY=...
+ *        GIFTEE_API_BASE=https://api-business.giftee.com/v1
+ *   4. POST /tickets で {productCode, quantity, deliveryConfig} を送信
+ *      レスポンスから claimUrl を取得し、メールで通知。
+ *
+ * #### Starbucks eGift / QUOCard Pay
+ *   - 通常は Giftee 経由（Giftee Box 等）でまとめて扱える。
+ *     独立した API 契約は法人取引が必要で重いので、
+ *     初期リリースでは Amazon + Giftee の 2 プロバイダーから始めるのが現実的。
+ *
+ * ### 現在の実装
+ *   各 Provider クラスは `purchaseGift` をモック実装で返す（実APIコール無し）。
+ *   ただし上位ロジック（金額計算 / 手数料控除 / DB 更新 / メール通知）は
+ *   完全に動作するため、API 統合時は各 `purchaseGift` 内の TODO セクションを
+ *   実装するだけで本番化できる。
+ * ============================================================================
  */
 
 import { createClient as createServerClient } from '@/lib/supabase/server';
