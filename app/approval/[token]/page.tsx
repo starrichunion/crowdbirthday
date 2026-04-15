@@ -211,17 +211,49 @@ export default function ApprovalPage({ params }: ApprovalPageProps) {
     );
   }
 
-  if (step === 'alreadyDone') {
+  if (step === 'alreadyDone' && data) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex flex-col items-center justify-center px-6 text-center">
+      <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex flex-col items-center justify-center px-6 text-center py-10">
         <div className="text-5xl mb-4">✅</div>
         <h1 className="text-xl font-bold text-gray-900 mb-2">承認済みです</h1>
-        <p className="text-sm text-gray-500 max-w-xs">
+        <p className="text-sm text-gray-500 max-w-xs mb-6">
           このお祝いページは既に承認されています。
         </p>
+
+        <div className="bg-white rounded-2xl shadow-lg p-6 w-full max-w-sm mb-6">
+          <div className="space-y-4 text-left">
+            <div>
+              <div className="text-xs text-gray-400 mb-1">企画者</div>
+              <div className="text-sm font-semibold text-gray-900">
+                {data.organizer.displayName}
+              </div>
+            </div>
+            <div className="border-t border-gray-100 pt-4">
+              <div className="text-xs text-gray-400 mb-1">お祝いの相手</div>
+              <div className="text-sm font-semibold text-gray-900">
+                {data.campaign.recipientName} さん
+              </div>
+            </div>
+            {data.campaign.wishItem && (
+              <div className="border-t border-gray-100 pt-4">
+                <div className="text-xs text-gray-400 mb-1">🎁 ほしいもの</div>
+                <div className="text-sm font-semibold text-gray-900">
+                  {data.campaign.wishItem}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <button
+          onClick={() => router.push(`/campaign/${data.campaign.id}`)}
+          className="w-full max-w-sm bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-2xl py-3 font-bold shadow-lg hover:opacity-90 transition-all mb-3"
+        >
+          🎉 お祝いページを見る
+        </button>
         <button
           onClick={() => router.push('/')}
-          className="mt-6 text-sm text-pink-600 font-semibold bg-pink-50 px-6 py-3 rounded-full hover:bg-pink-100"
+          className="text-sm text-gray-500 underline"
         >
           トップへ
         </button>
@@ -358,32 +390,62 @@ export default function ApprovalPage({ params }: ApprovalPageProps) {
 
   if (step === 'success' && data) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex flex-col items-center justify-center px-6 text-center">
+      <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex flex-col items-center justify-center px-6 text-center py-10">
         <div className="text-5xl mb-4">✅</div>
         <h1 className="text-xl font-bold text-gray-900 mb-2">承認されました！</h1>
         <p className="text-gray-500 mb-8 max-w-xs text-sm">
-          お祝いページを承認しました。<br />
-          eギフトの届け先メールアドレスも設定済みです。
+          {data.organizer.displayName}さんが企画した
+          <br />
+          あなたへのお祝いページが公開されました。
         </p>
 
         <div className="bg-white rounded-2xl shadow-lg p-6 w-full max-w-sm mb-6">
           <div className="space-y-4 text-left">
             <div>
-              <div className="text-xs text-gray-400 mb-1">承認者</div>
-              <div className="text-sm font-semibold text-gray-900">{data.campaign.recipientName}</div>
+              <div className="text-xs text-gray-400 mb-1">企画者</div>
+              <div className="text-sm font-semibold text-gray-900">
+                {data.organizer.displayName}
+              </div>
             </div>
             <div className="border-t border-gray-100 pt-4">
+              <div className="text-xs text-gray-400 mb-1">お祝いの相手</div>
+              <div className="text-sm font-semibold text-gray-900">
+                {data.campaign.recipientName} さん
+              </div>
+            </div>
+            {data.campaign.wishItem && (
+              <div className="border-t border-gray-100 pt-4">
+                <div className="text-xs text-gray-400 mb-1">🎁 ほしいもの</div>
+                <div className="text-sm font-semibold text-gray-900">
+                  {data.campaign.wishItem}
+                </div>
+                {data.campaign.wishPrice && (
+                  <div className="text-xs text-gray-500 mt-1">
+                    目安 ¥{data.campaign.wishPrice.toLocaleString('ja-JP')}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="border-t border-gray-100 pt-4">
               <div className="text-xs text-gray-400 mb-1">eギフト受取先</div>
-              <div className="text-sm font-semibold text-gray-900 break-all">{egiftEmail}</div>
+              <div className="text-sm font-semibold text-gray-900 break-all">
+                {egiftEmail}
+              </div>
             </div>
           </div>
         </div>
 
         <button
-          onClick={() => router.push('/')}
-          className="text-sm text-pink-600 font-semibold bg-pink-50 px-6 py-3 rounded-full hover:bg-pink-100 transition-all"
+          onClick={() => router.push(`/campaign/${data.campaign.id}`)}
+          className="w-full max-w-sm bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-2xl py-3 font-bold shadow-lg hover:opacity-90 transition-all mb-3"
         >
-          トップページへ
+          🎉 お祝いページを見る
+        </button>
+        <button
+          onClick={() => router.push('/')}
+          className="text-sm text-gray-500 underline"
+        >
+          トップへ
         </button>
       </div>
     );
