@@ -15,12 +15,14 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, AlertCircle } from 'lucide-react';
-import { ensureLineLogin, getLineProfile, initLiff } from '@/lib/liff';
+import { getLineProfile, initLiff } from '@/lib/liff';
+
+const PENDING_TOKEN_KEY = 'line_approver_pending_token';
 
 function ApproveInner() {
   const router = useRouter();
   const params = useSearchParams();
-  const token = params.get('token');
+  const tokenFromQuery = params.get('token');
   const [status, setStatus] = useState<'loading' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
@@ -29,12 +31,21 @@ function ApproveInner() {
       try {
         const liff = await initLiff();
 
+        // 1) クエリに token があれば sessionStorage に保存（LIFFログイン復帰後も保持できるように）
+        if (tokenFromQuery) {
+          sessionStorage.setItem(PENDING_TOKEN_KEY, tokenFromQuery);
+        }
+
+        // 2) 未ログインなら LIFF ログインへ。redirectUri は渡さず、
+        //    登録済みの LIFF エンドポイントURL（= /approve）に戻してもらう。
+        //    ?token=... を含めると LIFF の許可パターンと完全一致せず
+        //    「正常に処理できませんでした」になるため。
         if (!liff.isLoggedIn()) {
-          // ログインURLにリダイレクトされ、戻ってきたら再度このuseEffectが走る
-          await ensureLineLogin(window.location.href);
+          liff.login();
           return;
         }
 
+        // 3) ログイン済み: プロファイル取得
         const profile = await getLineProfile();
         if (!profile) {
           setStatus('error');
@@ -42,14 +53,17 @@ function ApproveInner() {
           return;
         }
 
+        // 4) token を復元（クエリ優先、無ければ sessionStorage）
+        const token =
+          tokenFromQuery || sessionStorage.getItem(PENDING_TOKEN_KEY);
         if (!token) {
           setStatus('error');
           setErrorMsg('承認トークンが指定されていません');
           return;
         }
 
-        // LINE プロファイル情報を sessionStorage に一時保存し、
-        // /approval/[token] で参照して承認処理に利用する
+        // 5) LINE プロファイル情報を sessionStorage に一時保存し、
+        //    /approval/[token] で参照して承認処理に利用する
         sessionStorage.setItem(
           'line_approver_profile',
           JSON.stringify({
@@ -58,6 +72,7 @@ function ApproveInner() {
             pictureUrl: profile.pictureUrl,
           })
         );
+        sessionStorage.removeItem(PENDING_TOKEN_KEY);
 
         router.replace(`/approval/${token}`);
       } catch (err: any) {
@@ -67,7 +82,7 @@ function ApproveInner() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [tokenFromQuery]);
 
   if (status === 'error') {
     return (

@@ -40,13 +40,21 @@ export default function SharePage({ params }: SharePageProps) {
   const [shareSending, setShareSending] = useState(false);
   const [shareResult, setShareResult] = useState<string | null>(null);
 
-  // 共有先 URL: 友達モードは /approval/<token>、ファンモードは /g/<slug>
+  // 共有先 URL:
+  //   友達モード: https://liff.line.me/<LIFF_ID>?token=<token>
+  //     → LINE 上でタップすると LIFF ウィンドウが直接開き、自動で LINE 認証が通る
+  //   ファンモード: /g/<slug>  （通常の公開ページ）
   const baseUrl =
     typeof window !== 'undefined' ? window.location.origin : '';
+  const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
 
   const shareUrl = (() => {
     if (!campaign) return '';
     if (campaign.mode === 'friend' && token) {
+      if (liffId) {
+        return `https://liff.line.me/${liffId}?token=${encodeURIComponent(token)}`;
+      }
+      // フォールバック: LIFF ID が未設定のときのみ従来URL
       return `${baseUrl}/approval/${token}`;
     }
     return `${baseUrl}/g/${campaign.slug}`;
