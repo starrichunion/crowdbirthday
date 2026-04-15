@@ -1,9 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronLeft, Sparkles, MessageCircle, Mail, Globe, Check, X, Heart, Share2, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { ensureLineLogin, getLineProfile, initLiff } from '@/lib/liff';
+
+// LIFFログインリダイレクト後の state 復元キー
+const CB_STATE_KEY = 'cb_campaign_state';
 
 // Theme configurations for categories
 const FRIEND_THEMES = {
@@ -22,8 +25,6 @@ type FanStep = 0 | 1 | 2;
 interface FriendFormData {
   theme: string;
   recipient: string;
-  recipientLineUserId?: string;
-  recipientLinePictureUrl?: string;
   wish: string;
   wishPrice: string;
   message: string;
@@ -31,6 +32,9 @@ interface FriendFormData {
 
 interface FanFormData {
   accountConnected: boolean;
+  lineUserId?: string;
+  lineDisplayName?: string;
+  linePictureUrl?: string;
   activityName: string;
   genre: string;
   snsLink: string;
@@ -67,38 +71,36 @@ export default function CampaignNewPage() {
 
   const [lineLoading, setLineLoading] = useState(false);
   const [lineError, setLineError] = useState<string | null>(null);
-  const [recipientManualInput, setRecipientManualInput] = useState(false);
 
   /**
-   * LINE ログインを起動し、ログインユーザー（=お祝いされる人の代理 or 本人）の
-   * プロファイルを recipient 情報としてフォームにセット。
+   * ファンモード用: 企画者本人の LINE プロファイルを取得して fanForm に反映。
    *
-   * 注: LIFFは友達リストAPIを提供しないため、ここでは「受取人本人が
-   * 端末でLINEログインして承認」するのではなく、企画者自身のLINE IDを
-   * 捕捉する過渡的な実装。本番承認フローは /approve ページで行う。
+   * 設計意図:
+   *   - ファンモードは「自分宛のキャンペーン」なので、本人のLINE情報を取得する
+   *     のは自然。
+   *   - 友達モードの受取人は本人が居ないと承認できないため、名前入力＋後から
+   *     `/approve` LIFF で受取人本人が承認するフローに分離。
    *
-   * 簡易モード: ログインなしで手入力も可能にするため、手入力モードへの
-   * 切替リンクも提供する。
+   * リダイレクト後の state 復元:
+   *   LINEログインは OAuth リダイレクトでページ全体を遷移させるため、
+   *   モード/ステップが消える。前もって sessionStorage に保存しておき、
+   *   戻ってきた時に復元する。
    */
-  const handleLineSelect = async () => {
+  const handleFanLineLogin = async () => {
     setLineError(null);
     setLineLoading(true);
     try {
       const liff = await initLiff();
       if (!liff.isLoggedIn()) {
+        // リダイレクト前に現在位置を保存
+        sessionStorage.setItem(
+          CB_STATE_KEY,
+          JSON.stringify({ mode: 'fanMode', step: fanStep })
+        );
         await ensureLineLogin(window.location.href);
-        // login() 後は OAuth リダイレクトで戻ってくる
         return;
       }
-      const profile = await getLineProfile();
-      if (profile) {
-        setFriendForm({
-          ...friendForm,
-          recipient: profile.displayName,
-          recipientLineUserId: profile.userId,
-          recipientLinePictureUrl: profile.pictureUrl,
-        });
-      }
+      await applyLineProfileToFanForm();
     } catch (err: any) {
       console.error('LINE login error:', err);
       setLineError(err?.message || 'LINE連携に失敗しました');
@@ -106,6 +108,58 @@ export default function CampaignNewPage() {
       setLineLoading(false);
     }
   };
+
+  const applyLineProfileToFanForm = async () => {
+    const profile = await getLineProfile();
+    if (!profile) return;
+    setFanForm((prev) => ({
+      ...prev,
+      accountConnected: true,
+      lineUserId: profile.userId,
+      lineDisplayName: profile.displayName,
+      linePictureUrl: profile.pictureUrl,
+      // 活動名が未入力ならLINE表示名をデフォルトにする
+      activityName: prev.activityName || profile.displayName,
+    }));
+  };
+
+  /**
+   * OAuth リダイレクト後の state 復元 + プロファイル反映
+   */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('code')) return; // 通常アクセスなら何もしない
+
+    const raw = sessionStorage.getItem(CB_STATE_KEY);
+    if (raw) {
+      try {
+        const saved = JSON.parse(raw) as { mode: PageMode; step: number };
+        if (saved.mode === 'fanMode') {
+          setPageMode('fanMode');
+          setFanStep((saved.step as FanStep) ?? 0);
+        }
+      } catch {
+        /* ignore */
+      }
+      sessionStorage.removeItem(CB_STATE_KEY);
+    }
+
+    // LIFF 初期化 → プロファイル反映
+    (async () => {
+      setLineLoading(true);
+      try {
+        await initLiff();
+        await applyLineProfileToFanForm();
+        // URL からクエリ除去
+        window.history.replaceState({}, '', '/campaign/new');
+      } catch (err: any) {
+        console.error('LIFF restore error:', err);
+      } finally {
+        setLineLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleFriendNext = () => {
     if (friendStep < 3) setFriendStep((friendStep + 1) as FriendStep);
@@ -237,75 +291,22 @@ export default function CampaignNewPage() {
           {/* Step 1: Recipient */}
           {friendStep === 1 && (
             <div>
-              <h2 className="text-xl font-bold text-gray-900 mb-1">誰の誕生日をお祝いする？</h2>
-              <p className="text-sm text-gray-400 mb-6">お祝いする本人をLINEから選んでください</p>
+              <h2 className="text-xl font-bold text-gray-900 mb-1">誰をお祝いする？</h2>
+              <p className="text-sm text-gray-400 mb-6">お祝いする人の名前（ニックネームでOK）</p>
 
-              {!recipientManualInput && (
-                <>
-                  <button
-                    onClick={handleLineSelect}
-                    disabled={lineLoading}
-                    className="w-full bg-green-500 text-white rounded-2xl py-4 font-bold flex items-center justify-center gap-2 mb-3 hover:bg-green-600 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {lineLoading ? (
-                      <><Loader2 className="w-5 h-5 animate-spin" /> LINE連携中...</>
-                    ) : (
-                      <><MessageCircle className="w-5 h-5" /> お祝いする人をLINEから選ぶ</>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setRecipientManualInput(true)}
-                    className="w-full text-xs text-gray-500 underline mb-4"
-                  >
-                    LINEを使わず名前を入力する
-                  </button>
-                </>
-              )}
+              <input
+                value={friendForm.recipient}
+                onChange={(e) => setFriendForm({ ...friendForm, recipient: e.target.value })}
+                placeholder="例：ゆきのちゃん"
+                className="w-full px-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-300 mb-4"
+              />
 
-              {recipientManualInput && (
-                <div className="mb-4">
-                  <input
-                    value={friendForm.recipient}
-                    onChange={(e) => setFriendForm({ ...friendForm, recipient: e.target.value })}
-                    placeholder="お祝いする人の名前"
-                    className="w-full px-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-300 mb-2"
-                  />
-                  <button
-                    onClick={() => setRecipientManualInput(false)}
-                    className="text-xs text-gray-500 underline"
-                  >
-                    LINEから選ぶに戻る
-                  </button>
-                </div>
-              )}
-
-              {lineError && (
-                <div className="text-xs text-red-500 mb-3 px-1">{lineError}</div>
-              )}
-
-              <div className="bg-green-50 border border-green-100 rounded-xl p-4 mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-green-200 flex items-center justify-center text-lg overflow-hidden">
-                    {friendForm.recipientLinePictureUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={friendForm.recipientLinePictureUrl} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      '👩'
-                    )}
-                  </div>
-                  <div>
-                    <div className="font-semibold text-gray-900 text-sm">{friendForm.recipient || '(未選択)'}</div>
-                    <div className="text-xs text-green-600">この人をお祝いする</div>
-                  </div>
-                  {friendForm.recipient && <Check className="w-5 h-5 text-green-500 ml-auto" />}
-                </div>
-              </div>
               <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
                 <div className="text-xs text-amber-700 leading-relaxed">
-                  <span className="font-semibold">🔒 なぜLINE承認が必要？</span>
+                  <span className="font-semibold">🔒 この後のながれ</span>
                   <br />
-                  公開後、本人に承認リクエストが届きます。本人が承認することでなりすましを防ぎ、
-                  eギフトが確実に届きます。
+                  公開後、<b>LINE招待リンク</b>を本人に送ります。本人がLINEで承認するとキャンペーンが有効化され、
+                  eギフトが本人に確実に届くようになります（なりすまし防止）。
                 </div>
               </div>
             </div>
@@ -378,30 +379,48 @@ export default function CampaignNewPage() {
       // Step 0: Account Registration
       <div key={0}>
         <h2 className="text-xl font-bold text-gray-900 mb-1">アカウント登録</h2>
-        <p className="text-sm text-gray-400 mb-6">まずはログイン方法を選んでください</p>
+        <p className="text-sm text-gray-400 mb-6">LINE連携でカンタン登録</p>
 
-        <button className="w-full bg-gray-900 text-white rounded-2xl py-3.5 font-bold flex items-center justify-center gap-2 mb-3 hover:bg-gray-800 transition-all">
-          <Globe className="w-5 h-5" /> Google で登録
-        </button>
-        <button className="w-full bg-gray-100 text-gray-700 rounded-2xl py-3.5 font-bold flex items-center justify-center gap-2 mb-3 hover:bg-gray-200 transition-all">
-          <Mail className="w-5 h-5" /> メールアドレスで登録
+        <button
+          onClick={handleFanLineLogin}
+          disabled={lineLoading || fanForm.accountConnected}
+          className="w-full bg-green-500 text-white rounded-2xl py-3.5 font-bold flex items-center justify-center gap-2 mb-3 hover:bg-green-600 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {lineLoading ? (
+            <><Loader2 className="w-5 h-5 animate-spin" /> LINE連携中...</>
+          ) : fanForm.accountConnected ? (
+            <><Check className="w-5 h-5" /> LINE連携済み</>
+          ) : (
+            <><MessageCircle className="w-5 h-5" /> LINEで登録</>
+          )}
         </button>
 
-        <div className="bg-green-50 border border-green-100 rounded-xl p-4 mt-4">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-green-200 flex items-center justify-center">
-              <Check className="w-4 h-4 text-green-600" />
-            </div>
-            <div>
-              <div className="font-semibold text-gray-900 text-sm">Google連携済み</div>
-              <div className="text-xs text-green-600">hinata.hoshino@gmail.com</div>
+        {lineError && (
+          <div className="text-xs text-red-500 mb-3 px-1">{lineError}</div>
+        )}
+
+        {fanForm.accountConnected && (
+          <div className="bg-green-50 border border-green-100 rounded-xl p-4 mt-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-green-200 flex items-center justify-center overflow-hidden">
+                {fanForm.linePictureUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={fanForm.linePictureUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <Check className="w-4 h-4 text-green-600" />
+                )}
+              </div>
+              <div>
+                <div className="font-semibold text-gray-900 text-sm">{fanForm.lineDisplayName}</div>
+                <div className="text-xs text-green-600">LINE連携済み</div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mt-3">
           <div className="text-xs text-blue-700">
-            🔒 このアドレスがeギフトの届け先になります。ファンには公開されません。
+            🔒 LINEアカウントはログインと本人確認のみに使用し、ファンには公開されません。eギフトの受取もLINE経由で届きます。
           </div>
         </div>
       </div>,
