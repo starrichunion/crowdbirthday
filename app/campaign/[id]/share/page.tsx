@@ -121,10 +121,14 @@ export default function SharePage({ params }: SharePageProps) {
       if (ok) {
         setShareResult('LINEで送信しました！');
       } else {
-        // shareTargetPicker が使えない場合（外部ブラウザ等）
-        setShareResult(
-          '外部ブラウザのため LINE 直接送信は使えません。リンクをコピーして送ってください。'
-        );
+        // shareTargetPicker は LIFF 内専用なので、外部ブラウザ時は
+        // LINE 公式の Share Plugin (lineit/share) にフォールバック。
+        // これは LINE アプリを開いて友達を選ぶダイアログが出る。
+        const lineShareUrl =
+          `https://social-plugins.line.me/lineit/share?url=` +
+          encodeURIComponent(shareUrl);
+        window.open(lineShareUrl, '_blank', 'noopener,noreferrer');
+        setShareResult('LINEのシェア画面を開きました。送る友達を選んでください。');
       }
     } catch (err: any) {
       console.error(err);
