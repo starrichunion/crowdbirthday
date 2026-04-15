@@ -175,6 +175,92 @@ export async function sendApprovalRequestEmail(
 }
 
 // ============================================================================
+// EGIFT EMAIL CONFIRMATION (to recipient — sent right after they enter their address)
+// ============================================================================
+
+/**
+ * Send a confirmation email to the recipient's chosen eGift address
+ * right after approval, so they can spot typos and confirm the address
+ * is reachable. Includes a link back to the campaign page.
+ */
+export async function sendEgiftEmailConfirmation(
+  to: string,
+  recipientName: string,
+  organizerName: string,
+  campaignUrl: string,
+  wishItem?: string | null
+): Promise<EmailResponse> {
+  const subject = '🎁 eギフト受取アドレスの登録が完了しました';
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="ja">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        ${baseStyles}
+        .header {
+          background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+        .info-box {
+          background-color: #d1fae5;
+          border-color: #10b981;
+        }
+        .check-box {
+          background-color: #ecfdf5;
+          border: 1px solid #a7f3d0;
+          padding: 16px;
+          border-radius: 8px;
+          margin: 20px 0;
+          font-size: 14px;
+          color: #065f46;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>🎁 受取アドレスを登録しました</h1>
+        </div>
+        <div class="content">
+          <p>${recipientName} さん、こんにちは!</p>
+          <p>
+            <strong>${organizerName}</strong> さんが企画したお祝いページの承認が完了し、
+            このメールアドレスを <strong>eギフトの受取先</strong> として登録しました。
+          </p>
+
+          <div class="info-box">
+            <p style="margin: 0;"><strong>📧 登録アドレス</strong><br>${to}</p>
+            ${wishItem ? `<p style="margin: 8px 0 0;"><strong>🎁 ほしいもの</strong><br>${wishItem}</p>` : ''}
+          </div>
+
+          <div class="check-box">
+            ✅ このメールが届いた = アドレス登録は正常です。<br>
+            お祝い金が目標達成すると、このアドレスにeギフトが届きます。
+          </div>
+
+          <p>もしアドレスを間違えて登録してしまった場合は、もう一度承認リンクから設定し直すか、企画者の <strong>${organizerName}</strong> さんにご連絡ください。</p>
+
+          <div style="text-align: center;">
+            <a href="${campaignUrl}" class="button" style="background: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%);">
+              お祝いページを見る
+            </a>
+          </div>
+        </div>
+        <div class="footer">
+          <p>このメールはCrowdBirthdayから自動送信されています。</p>
+          <p>&copy; 2026 CrowdBirthday. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return sendEmail(to, subject, html);
+}
+
+// ============================================================================
 // CAMPAIGN APPROVED EMAIL (to organizer)
 // ============================================================================
 

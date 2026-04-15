@@ -9,7 +9,10 @@ import {
   createClient as createServerClient,
   createServiceClient,
 } from '@/lib/supabase/server';
-import { sendApprovalRequestEmail } from '@/lib/email';
+import {
+  sendApprovalRequestEmail,
+  sendEgiftEmailConfirmation,
+} from '@/lib/email';
 
 interface ApprovalRequestBody {
   recipientEmail?: string;
@@ -277,11 +280,44 @@ export async function POST(
       .eq('id', campaign.organizer_id)
       .single();
 
+    const organizerDisplayName =
+      !organizerError && organizer ? organizer.display_name : '企画者';
+
     if (!organizerError && organizer) {
       await sendApprovalApprovedNotification(
         organizer.email,
         campaign.recipient_name,
         recipientEmail
+      );
+    }
+
+    // Send confirmation email to recipient's eGift address so they can
+    // verify the address is reachable / spot typos right away.
+    try {
+      const baseUrl =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        `https://${request.headers.get('host') ?? 'crowdbirthday.com'}`;
+      const campaignUrl = `${baseUrl}/campaign/${approval.campaign_id}`;
+
+      // wishItem を取得するため campaign を再フェッチ(軽量)
+      const { data: campaignDetail } = await supabase
+        .from('campaigns' as any)
+        .select('wish_item')
+        .eq('id', approval.campaign_id)
+        .single();
+
+      await sendEgiftEmailConfirmation(
+        recipientEmail,
+        campaign.recipient_name,
+        organizerDisplayName,
+        campaignUrl,
+        campaignDetail?.wish_item ?? null
+      );
+    } catch (confirmErr) {
+      // 確認メール失敗は承認自体は成功扱いにする(ログのみ)
+      console.error(
+        '[approval.POST] sendEgiftEmailConfirmation failed:',
+        confirmErr
       );
     }
 
