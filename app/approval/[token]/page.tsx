@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Check, Mail, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { ensureLineLogin, getLineProfile, initLiff } from '@/lib/liff';
+import { getLineProfile, initLiff } from '@/lib/liff';
 
 interface ApprovalPageProps {
   params: {
@@ -26,6 +26,7 @@ interface ApprovalData {
 }
 
 const CB_APPROVAL_STATE_KEY = 'cb_approval_state';
+const LINE_APPROVER_PROFILE_KEY = 'line_approver_profile';
 
 export default function ApprovalPage({ params }: ApprovalPageProps) {
   const router = useRouter();
@@ -43,9 +44,39 @@ export default function ApprovalPage({ params }: ApprovalPageProps) {
     pictureUrl?: string;
   } | null>(null);
 
-  // 1. 承認情報の取得
+  // 1. 承認情報の取得 + /approve からの戻り状態復元
   useEffect(() => {
     (async () => {
+      // /approve が LIFF 認証後に保存したプロファイルを先に取り出す
+      let restoredProfile: {
+        userId: string;
+        displayName: string;
+        pictureUrl?: string;
+      } | null = null;
+      try {
+        const savedProfile = sessionStorage.getItem(LINE_APPROVER_PROFILE_KEY);
+        if (savedProfile) {
+          restoredProfile = JSON.parse(savedProfile);
+          sessionStorage.removeItem(LINE_APPROVER_PROFILE_KEY);
+        }
+      } catch {
+        /* ignore */
+      }
+
+      // 以前入力済みの egiftEmail を復元
+      try {
+        const savedState = sessionStorage.getItem(CB_APPROVAL_STATE_KEY);
+        if (savedState) {
+          const parsedState = JSON.parse(savedState) as { egiftEmail?: string };
+          if (parsedState.egiftEmail) setEgiftEmail(parsedState.egiftEmail);
+          sessionStorage.removeItem(CB_APPROVAL_STATE_KEY);
+        }
+      } catch {
+        /* ignore */
+      }
+
+      if (restoredProfile) setLineProfile(restoredProfile);
+
       try {
         const res = await fetch(`/api/approval/${params.token}`, {
           cache: 'no-store',
@@ -62,6 +93,9 @@ export default function ApprovalPage({ params }: ApprovalPageProps) {
         } else if (json.approval.status === 'rejected') {
           setErrorMsg('この承認リクエストは既に拒否されています');
           setStep('error');
+        } else if (restoredProfile) {
+          // /approve から戻ってきた → LIFF 認証済み。メール入力ステップへ。
+          setStep('egiftEmail');
         } else {
           setStep('waiting');
         }
@@ -73,56 +107,28 @@ export default function ApprovalPage({ params }: ApprovalPageProps) {
     })();
   }, [params.token]);
 
-  // 2. OAuth リダイレクト復元（LINEログイン後）
-  useEffect(() => {
-    const search = new URLSearchParams(window.location.search);
-    if (!search.has('code')) return;
-    (async () => {
-      setLineLoading(true);
-      try {
-        await initLiff();
-        const profile = await getLineProfile();
-        if (profile) setLineProfile(profile);
-        // egift email を sessionStorage から復元
-        const saved = sessionStorage.getItem(CB_APPROVAL_STATE_KEY);
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved) as { egiftEmail?: string };
-            if (parsed.egiftEmail) setEgiftEmail(parsed.egiftEmail);
-          } catch {
-            /* ignore */
-          }
-          sessionStorage.removeItem(CB_APPROVAL_STATE_KEY);
-        }
-        setStep('egiftEmail');
-        window.history.replaceState({}, '', `/approval/${params.token}`);
-      } catch (err: any) {
-        console.error(err);
-        setErrorMsg(err?.message || 'LINE 連携に失敗しました');
-        setStep('error');
-      } finally {
-        setLineLoading(false);
-      }
-    })();
-  }, [params.token]);
-
   // ユーザーが「承認する」を押した時
+  // LIFF のログイン用コールバックURLは /approve のみ登録されている。
+  // /approval/[token] のような動的パスを ensureLineLogin の redirectUri にすると
+  // LINE 側で 400 Bad Request になるので、必ず /approve 経由でLIFF認証を通す。
   const handleApprove = async () => {
     setLineLoading(true);
     try {
       const liff = await initLiff();
-      if (!liff.isLoggedIn()) {
-        // メールアドレス入力後でも復元できるよう保存
-        sessionStorage.setItem(
-          CB_APPROVAL_STATE_KEY,
-          JSON.stringify({ egiftEmail })
-        );
-        await ensureLineLogin(window.location.href);
+      if (liff.isLoggedIn()) {
+        const profile = await getLineProfile();
+        if (profile) setLineProfile(profile);
+        setStep('egiftEmail');
         return;
       }
-      const profile = await getLineProfile();
-      if (profile) setLineProfile(profile);
-      setStep('egiftEmail');
+
+      // 未ログイン: 入力途中の状態を保存して /approve?token=... に飛ばす
+      //   → /approve が LIFF 認証 → sessionStorage に profile 保存 → /approval/[token] へ戻す
+      sessionStorage.setItem(
+        CB_APPROVAL_STATE_KEY,
+        JSON.stringify({ egiftEmail })
+      );
+      window.location.href = `/approve?token=${encodeURIComponent(params.token)}`;
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err?.message || 'LINE 認証に失敗しました');
