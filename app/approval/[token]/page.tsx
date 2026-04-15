@@ -108,9 +108,14 @@ export default function ApprovalPage({ params }: ApprovalPageProps) {
   }, [params.token]);
 
   // ユーザーが「承認する」を押した時
-  // LIFF のログイン用コールバックURLは /approve のみ登録されている。
-  // /approval/[token] のような動的パスを ensureLineLogin の redirectUri にすると
-  // LINE 側で 400 Bad Request になるので、必ず /approve 経由でLIFF認証を通す。
+  //
+  // LINE 内蔵ブラウザから /approve → liff.login() と遷移すると
+  // access.line.me の OAuth が 400 Bad Request を返すケースがある
+  // （LINE 内蔵ブラウザは LIFF 認証 state を持たないため）。
+  //
+  // 対策: liffId があるなら必ず LIFF URL (https://liff.line.me/<id>?token=...)
+  // に飛ばす。LINE アプリは LIFF URL を検知して LIFF ブラウザで開き直すので、
+  // access.line.me を経由せず自動認証が完了する。
   const handleApprove = async () => {
     setLineLoading(true);
     try {
@@ -122,13 +127,24 @@ export default function ApprovalPage({ params }: ApprovalPageProps) {
         return;
       }
 
-      // 未ログイン: 入力途中の状態を保存して /approve?token=... に飛ばす
-      //   → /approve が LIFF 認証 → sessionStorage に profile 保存 → /approval/[token] へ戻す
+      // 未ログイン: 入力途中の状態を保存
       sessionStorage.setItem(
         CB_APPROVAL_STATE_KEY,
         JSON.stringify({ egiftEmail })
       );
-      window.location.href = `/approve?token=${encodeURIComponent(params.token)}`;
+
+      // LINE 内蔵ブラウザかどうかで分岐:
+      //   LINE 内: LIFF URL にリダイレクト → LIFF ブラウザで開き直し → 自動認証
+      //   外部ブラウザ: /approve?token=... 経由で liff.login() (access.line.me)
+      const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+      const isLineInAppBrowser = /Line\//i.test(ua);
+      const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
+
+      if (isLineInAppBrowser && liffId) {
+        window.location.href = `https://liff.line.me/${liffId}?token=${encodeURIComponent(params.token)}`;
+      } else {
+        window.location.href = `/approve?token=${encodeURIComponent(params.token)}`;
+      }
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err?.message || 'LINE 認証に失敗しました');

@@ -36,11 +36,27 @@ function ApproveInner() {
           sessionStorage.setItem(PENDING_TOKEN_KEY, tokenFromQuery);
         }
 
-        // 2) 未ログインなら LIFF ログインへ。redirectUri は渡さず、
-        //    登録済みの LIFF エンドポイントURL（= /approve）に戻してもらう。
-        //    ?token=... を含めると LIFF の許可パターンと完全一致せず
-        //    「正常に処理できませんでした」になるため。
+        // 2) 未ログイン時の分岐
+        //    - LINE 内蔵ブラウザ（LIFF でない LINE in-app browser）から来た場合は
+        //      liff.login() を呼ぶと access.line.me の OAuth が 400 Bad Request を
+        //      返すケースがあるため、LIFF URL にリダイレクトして LINE アプリに
+        //      LIFF ブラウザで開き直させる。
+        //    - 外部ブラウザ（Chrome 等）からの場合は通常の liff.login() フロー。
         if (!liff.isLoggedIn()) {
+          const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+          const isLineInAppBrowser = /Line\//i.test(ua);
+          const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
+          const tokenToPersist =
+            tokenFromQuery || sessionStorage.getItem(PENDING_TOKEN_KEY);
+          // 無限ループ防止: 既に LIFF リトライ済みなら fallback に落ちる
+          const alreadyRetried = params.get('liff_retry') === '1';
+
+          if (isLineInAppBrowser && liffId && tokenToPersist && !alreadyRetried) {
+            window.location.replace(
+              `https://liff.line.me/${liffId}?token=${encodeURIComponent(tokenToPersist)}&liff_retry=1`
+            );
+            return;
+          }
           liff.login();
           return;
         }
