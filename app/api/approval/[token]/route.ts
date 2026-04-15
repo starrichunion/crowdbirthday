@@ -5,7 +5,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createServerClient } from '@/lib/supabase/server';
+import {
+  createClient as createServerClient,
+  createServiceClient,
+} from '@/lib/supabase/server';
 import { sendApprovalRequestEmail } from '@/lib/email';
 
 interface ApprovalRequestBody {
@@ -116,7 +119,9 @@ export async function POST(
       );
     }
 
-    const supabase = await createServerClient();
+    // サービスロールで動かす: 承認トークン自体が認可クレデンシャルなので
+    // RLS をバイパスして anon ロールの RLS ポリシーに依存せずに書き込む。
+    const supabase = createServiceClient();
 
     // Find approval by token
     const { data: approval, error: findError } = await supabase
@@ -126,35 +131,50 @@ export async function POST(
       .single();
 
     if (findError || !approval) {
+      console.error('[approval.POST] findError:', findError);
       return NextResponse.json(
         { error: 'Invalid or expired approval token' },
         { status: 404 }
       );
     }
 
-    // Check if already approved
-    if (approval.status !== 'pending') {
+    // Idempotent re-submit: if already approved, just update user's egift_email and return success
+    // so the user doesn't see an error when re-clicking the approve link.
+    const isAlreadyApproved = approval.status === 'approved';
+
+    if (approval.status === 'rejected') {
       return NextResponse.json(
-        { error: 'This approval has already been processed' },
+        { error: 'This approval has been rejected' },
         { status: 400 }
       );
     }
 
     // Update approval status (LIFFで取得した受取人のLINE userIdをここで反映)
-    const approvalUpdate: Record<string, any> = {
-      status: 'approved',
-      approved_at: new Date().toISOString(),
-    };
-    if (recipientLineUserId) {
-      approvalUpdate.recipient_line_user_id = recipientLineUserId;
-    }
-    const { error: updateApprovalError } = await supabase
-      .from('approvals' as any)
-      .update(approvalUpdate)
-      .eq('token', token);
+    if (!isAlreadyApproved) {
+      const approvalUpdate: Record<string, any> = {
+        status: 'approved',
+        approved_at: new Date().toISOString(),
+      };
+      if (recipientLineUserId) {
+        approvalUpdate.recipient_line_user_id = recipientLineUserId;
+      }
+      const { error: updateApprovalError } = await supabase
+        .from('approvals' as any)
+        .update(approvalUpdate)
+        .eq('token', token);
 
-    if (updateApprovalError) {
-      throw updateApprovalError;
+      if (updateApprovalError) {
+        console.error('[approval.POST] updateApprovalError:', updateApprovalError);
+        throw new Error(
+          `approvals update failed: ${updateApprovalError.message || JSON.stringify(updateApprovalError)}`
+        );
+      }
+    } else if (recipientLineUserId) {
+      // Already approved but we now have a LINE userId → backfill
+      await supabase
+        .from('approvals' as any)
+        .update({ recipient_line_user_id: recipientLineUserId })
+        .eq('token', token);
     }
 
     // Fetch campaign details
@@ -165,7 +185,10 @@ export async function POST(
       .single();
 
     if (campaignError || !campaign) {
-      throw new Error('Campaign not found');
+      console.error('[approval.POST] campaignError:', campaignError);
+      throw new Error(
+        `campaign fetch failed: ${campaignError?.message || 'not found'}`
+      );
     }
 
     // Create or update recipient user record with email
@@ -175,14 +198,18 @@ export async function POST(
 
     let resolvedUserId: string | null = null;
     if (lineUserIdForLookup) {
-      const { data: existingUser } = await supabase
+      const { data: existingUser, error: existingUserError } = await supabase
         .from('users' as any)
         .select('id')
         .eq('line_user_id', lineUserIdForLookup)
         .maybeSingle();
 
+      if (existingUserError) {
+        console.error('[approval.POST] existingUserError:', existingUserError);
+      }
+
       if (existingUser) {
-        await supabase
+        const { error: updateUserError } = await supabase
           .from('users' as any)
           .update({
             egift_email: recipientEmail,
@@ -191,11 +218,17 @@ export async function POST(
             updated_at: new Date().toISOString(),
           })
           .eq('id', existingUser.id);
+        if (updateUserError) {
+          console.error('[approval.POST] updateUserError:', updateUserError);
+          throw new Error(
+            `users update failed: ${updateUserError.message || JSON.stringify(updateUserError)}`
+          );
+        }
         resolvedUserId = existingUser.id;
       } else {
         // 新規作成（受取人本人がまだ users に居ない場合）
         const fallbackEmail = `line_${lineUserIdForLookup}@line.local`;
-        const { data: created } = await supabase
+        const { data: created, error: insertUserError } = await supabase
           .from('users' as any)
           .insert([
             {
@@ -210,21 +243,31 @@ export async function POST(
           ])
           .select('id')
           .single();
+        if (insertUserError) {
+          console.error('[approval.POST] insertUserError:', insertUserError);
+          throw new Error(
+            `users insert failed: ${insertUserError.message || JSON.stringify(insertUserError)}`
+          );
+        }
         resolvedUserId = created?.id || null;
       }
     }
 
     // Update campaign: set recipient_id and status to active
+    const campaignUpdate: Record<string, any> = { status: 'active' };
+    if (resolvedUserId) {
+      campaignUpdate.recipient_id = resolvedUserId;
+    }
     const { error: updateCampaignError } = await supabase
       .from('campaigns' as any)
-      .update({
-        status: 'active',
-        recipient_id: resolvedUserId,
-      })
+      .update(campaignUpdate)
       .eq('id', approval.campaign_id);
 
     if (updateCampaignError) {
-      throw updateCampaignError;
+      console.error('[approval.POST] updateCampaignError:', updateCampaignError);
+      throw new Error(
+        `campaigns update failed: ${updateCampaignError.message || JSON.stringify(updateCampaignError)}`
+      );
     }
 
     // Fetch organizer info to send confirmation email
@@ -247,13 +290,19 @@ export async function POST(
       message: 'Campaign approved and activated',
       campaignId: approval.campaign_id,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error processing approval:', error);
+    // Supabase/Postgrest errors are plain objects, not Error instances.
+    // Extract message from either Error or plain object with message/details.
+    const message =
+      error instanceof Error
+        ? error.message
+        : error?.message ||
+          error?.details ||
+          error?.hint ||
+          (typeof error === 'string' ? error : JSON.stringify(error));
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : 'Failed to process approval',
-      },
+      { error: message || 'Failed to process approval' },
       { status: 500 }
     );
   }
