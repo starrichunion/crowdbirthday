@@ -32,7 +32,7 @@ export default function DashboardPage() {
       try {
         const liff = await initLiff();
 
-        if (\!liff.isLoggedIn()) {
+        if (!liff.isLoggedIn()) {
           // LIFF未ログイン → ログインボタンを表示（リダイレクトしない）
           setNeedsLogin(true);
           setLoading(false);
@@ -51,7 +51,7 @@ export default function DashboardPage() {
   const loadDashboardData = async () => {
     try {
       const profile = await getLineProfile();
-      if (\!profile) {
+      if (!profile) {
         setNeedsLogin(true);
         setLoading(false);
         return;
@@ -66,7 +66,7 @@ export default function DashboardPage() {
         pictureUrl: profile.pictureUrl,
       });
 
-      if (\!userRes.success) {
+      if (!userRes.success) {
         setError('ユーザー情報の取得に失敗しました');
         setLoading(false);
         return;
@@ -100,7 +100,7 @@ export default function DashboardPage() {
   // OAuth リダイレクト後の復帰処理
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (\!params.has('code')) return;
+    if (!params.has('code')) return;
 
     (async () => {
       try {
@@ -203,7 +203,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {campaigns.length === 0 && \!error ? (
+        {campaigns.length === 0 && !error ? (
           <div className="text-center py-16">
             <div className="text-6xl mb-4">🎉</div>
             <h2 className="text-lg font-bold text-gray-900 mb-2">
