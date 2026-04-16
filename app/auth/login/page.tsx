@@ -28,7 +28,7 @@ export default function LoginPage() {
   // OAuth リダイレクト後
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (\!params.has('code')) return;
+    if (!params.has('code')) return;
     (async () => {
       try {
         await initLiff();
