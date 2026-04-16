@@ -102,7 +102,7 @@ export default function CampaignGiftPage({
   // 欲しい物URL が設定されていれば OGP プレビューを取得
   useEffect(() => {
     const url = campaign?.wish_item_url;
-    if (\!url) {
+    if (!url) {
       setOgPreview(null);
       return;
     }
@@ -112,9 +112,9 @@ export default function CampaignGiftPage({
         const r = await fetch(
           `/api/og-preview?url=${encodeURIComponent(url)}`
         );
-        if (\!r.ok) return;
+        if (!r.ok) return;
         const data = await r.json();
-        if (\!cancelled) setOgPreview({ ...data, url });
+        if (!cancelled) setOgPreview({ ...data, url });
       } catch {
         /* ignore */
       }

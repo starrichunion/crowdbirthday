@@ -64,8 +64,8 @@ function normalizeSnsLinks(
   const out: Array<{ label?: string; url: string }> = [];
   for (const r of raw) {
     let v = (r || '').trim();
-    if (\!v) continue;
-    if (\!/^https?:\/\//i.test(v)) v = 'https://' + v;
+    if (!v) continue;
+    if (!/^https?:\/\//i.test(v)) v = 'https://' + v;
     try {
       const u = new URL(v);
       const host = u.hostname.replace(/^www\./, '').toLowerCase();
@@ -666,7 +666,7 @@ export default function CampaignNewPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    const next = fanForm.snsLinks.filter((_, idx) => idx \!== i);
+                    const next = fanForm.snsLinks.filter((_, idx) => idx !== i);
                     setFanForm({
                       ...fanForm,
                       snsLinks: next.length ? next : [''],

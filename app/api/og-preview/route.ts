@@ -39,7 +39,7 @@ const MEMO_MAX = 256;
 
 function memoGet(key: string): OgPreview | null {
   const hit = MEMO.get(key);
-  if (\!hit) return null;
+  if (!hit) return null;
   if (hit.expires < Date.now()) {
     MEMO.delete(key);
     return null;
@@ -66,7 +66,7 @@ function isHttpUrl(s: string): boolean {
 }
 
 function abs(base: string, maybe?: string | null): string | undefined {
-  if (\!maybe) return undefined;
+  if (!maybe) return undefined;
   try {
     return new URL(maybe, base).toString();
   } catch {
@@ -139,13 +139,13 @@ async function fetchPartialHtml(url: string): Promise<string> {
     next: { revalidate: 21600 },
     redirect: 'follow',
   });
-  if (\!res.ok) {
+  if (!res.ok) {
     throw new Error(`Upstream returned ${res.status}`);
   }
 
   // 先頭 256KB だけ読む。OGP は大体 <head> 内なので十分。
   const reader = res.body?.getReader();
-  if (\!reader) return await res.text();
+  if (!reader) return await res.text();
   const chunks: Uint8Array[] = [];
   let total = 0;
   const LIMIT = 256 * 1024;
@@ -167,7 +167,7 @@ async function fetchPartialHtml(url: string): Promise<string> {
   const csm = text.match(/charset=["']?([\w-]+)/i);
   if (csm) {
     const cs = csm[1].toLowerCase();
-    if (cs \!== 'utf-8' && cs \!== 'utf8') {
+    if (cs !== 'utf-8' && cs !== 'utf8') {
       try {
         const decoder = new TextDecoder(cs as string);
         text = decoder.decode(head);
@@ -181,7 +181,7 @@ async function fetchPartialHtml(url: string): Promise<string> {
 
 export async function GET(request: NextRequest) {
   const target = request.nextUrl.searchParams.get('url');
-  if (\!target || \!isHttpUrl(target)) {
+  if (!target || !isHttpUrl(target)) {
     return NextResponse.json(
       { error: 'Valid http(s) url query is required' },
       { status: 400 }
@@ -216,7 +216,7 @@ export async function GET(request: NextRequest) {
       new URL(target).hostname;
 
     // Amazon フォールバック
-    if (\!image && /amazon\.[a-z.]+/i.test(target)) {
+    if (!image && /amazon\.[a-z.]+/i.test(target)) {
       image = pickAmazonImage(html);
     }
 
