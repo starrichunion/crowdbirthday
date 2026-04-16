@@ -8,6 +8,9 @@
  *   Stripe may redeliver the same event on failure/delay. We INSERT the event.id
  *   into webhook_events first — a unique-violation means we already processed it,
  *   so we return 200 early without re-creating contributions.
+ *
+ * エラー監視:
+ *   失敗箇所は `logError('stripe_webhook', ...)` で Supabase error_logs に記録。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,6 +24,7 @@ import {
   sendCampaignFundedNotification,
   sendNewContributionNotification,
 } from '@/lib/email';
+import { logError } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   const body = await request.text();
@@ -40,6 +44,9 @@ export async function POST(request: NextRequest) {
   );
 
   if (!isValid) {
+    await logError('stripe_webhook', new Error('Invalid webhook signature'), {
+      phase: 'signature_verify',
+    });
     return NextResponse.json(
       { error: 'Invalid webhook signature' },
       { status: 401 }
@@ -50,6 +57,7 @@ export async function POST(request: NextRequest) {
   try {
     event = JSON.parse(body);
   } catch (err) {
+    await logError('stripe_webhook', err, { phase: 'json_parse' });
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
@@ -78,6 +86,11 @@ export async function POST(request: NextRequest) {
       });
     }
     console.error('[webhook] idempotency insert failed:', idempotencyError);
+    await logError('stripe_webhook', idempotencyError, {
+      phase: 'idempotency_insert',
+      eventId: event.id,
+      eventType: event.type,
+    });
     return NextResponse.json(
       { error: 'Failed to record webhook event' },
       { status: 500 }
@@ -110,6 +123,12 @@ export async function POST(request: NextRequest) {
 
       if (contributionError) {
         console.error('Error creating contribution:', contributionError);
+        await logError('stripe_webhook', contributionError, {
+          phase: 'insert_contribution',
+          eventId: event.id,
+          campaignId: metadata.campaignId,
+          amount: amountJPY,
+        });
         await markWebhookFailed(supabase, event.id, contributionError.message);
         return NextResponse.json(
           { error: 'Failed to create contribution record' },
@@ -125,6 +144,11 @@ export async function POST(request: NextRequest) {
 
       if (campaignError) {
         console.error('Error fetching campaign:', campaignError);
+        await logError('stripe_webhook', campaignError, {
+          phase: 'fetch_campaign',
+          eventId: event.id,
+          campaignId: metadata.campaignId,
+        });
         return NextResponse.json(
           { error: 'Failed to fetch campaign' },
           { status: 500 }
@@ -139,6 +163,11 @@ export async function POST(request: NextRequest) {
 
       if (statsError) {
         console.error('Error calculating total raised:', statsError);
+        await logError('stripe_webhook', statsError, {
+          phase: 'compute_total',
+          eventId: event.id,
+          campaignId: metadata.campaignId,
+        });
         return NextResponse.json(
           { error: 'Failed to calculate campaign total' },
           { status: 500 }
@@ -159,6 +188,12 @@ export async function POST(request: NextRequest) {
           .eq('id', metadata.campaignId);
         if (statusError) {
           console.error('Error updating campaign status:', statusError);
+          await logError('stripe_webhook', statusError, {
+            phase: 'mark_funded',
+            level: 'warn',
+            eventId: event.id,
+            campaignId: metadata.campaignId,
+          }, { level: 'warn' });
         }
       }
 
@@ -169,20 +204,30 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (!organizerError && organizer) {
-        await sendNewContributionNotification(
-          organizer.email,
-          campaign.recipient_name,
-          amountJPY,
-          metadata.contributorName,
-          isFunded
-        );
-        if (isFunded) {
-          await sendCampaignFundedNotification(
+        try {
+          await sendNewContributionNotification(
             organizer.email,
             campaign.recipient_name,
-            totalRaised,
-            campaign.wish_price!
+            amountJPY,
+            metadata.contributorName,
+            isFunded
           );
+          if (isFunded) {
+            await sendCampaignFundedNotification(
+              organizer.email,
+              campaign.recipient_name,
+              totalRaised,
+              campaign.wish_price!
+            );
+          }
+        } catch (emailErr) {
+          // メール送信失敗は致命的ではないので warn として記録
+          await logError('stripe_webhook_email', emailErr, {
+            phase: 'notify_organizer',
+            eventId: event.id,
+            campaignId: metadata.campaignId,
+            organizerEmail: organizer.email,
+          }, { level: 'warn' });
         }
       }
 
@@ -203,6 +248,11 @@ export async function POST(request: NextRequest) {
 
       if (error) {
         console.error('Error updating contribution status:', error);
+        await logError('stripe_webhook', error, {
+          phase: 'mark_refunded',
+          eventId: event.id,
+          chargeId: metadata.chargeId,
+        });
         await markWebhookFailed(supabase, event.id, error.message);
         return NextResponse.json(
           { error: 'Failed to update contribution' },
@@ -221,6 +271,11 @@ export async function POST(request: NextRequest) {
     console.error('Webhook processing error:', error);
     const errorMessage =
       error instanceof Error ? error.message : 'Failed to process webhook';
+    await logError('stripe_webhook', error, {
+      phase: 'catch_all',
+      eventId: event.id,
+      eventType: event.type,
+    });
     await markWebhookFailed(supabase, event.id, errorMessage);
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
@@ -243,5 +298,9 @@ async function markWebhookFailed(
       .eq('id', eventId);
   } catch (e) {
     console.error('[webhook] failed to mark event as failed:', e);
+    await logError('stripe_webhook', e, {
+      phase: 'mark_webhook_failed',
+      eventId,
+    }, { level: 'warn' });
   }
 }

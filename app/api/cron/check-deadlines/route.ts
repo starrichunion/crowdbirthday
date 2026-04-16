@@ -5,10 +5,14 @@
  *
  * Trigger: Scheduled daily at midnight (configurable)
  * Method: GET (Vercel Cron) or POST (manual trigger)
+ *
+ * エラー監視:
+ *   失敗箇所は `logError('cron_check_deadlines', ...)` で Supabase error_logs に記録。
  */
 
 import { NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@/lib/supabase/server';
+import { logError, logInfo } from '@/lib/logger';
 
 export const maxDuration = 60; // Vercel Cron max duration
 
@@ -31,6 +35,11 @@ export async function GET(request: Request) {
   const vercelCronHeader = request.headers.get('x-vercel-cron');
 
   if (!cronSecret || vercelCronHeader !== cronSecret) {
+    await logError('cron_check_deadlines', new Error('Unauthorized cron GET'), {
+      phase: 'auth',
+      hasSecret: !!cronSecret,
+      hasHeader: !!vercelCronHeader,
+    }, { level: 'warn' });
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -46,6 +55,9 @@ export async function POST(request: Request) {
   const expectedAuth = `Bearer ${process.env.CRON_SECRET}`;
 
   if (!authHeader || authHeader !== expectedAuth) {
+    await logError('cron_check_deadlines', new Error('Unauthorized cron POST'), {
+      phase: 'auth',
+    }, { level: 'warn' });
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -149,6 +161,11 @@ async function handleCheckDeadlines() {
           `[Deadline Check] Error processing campaign ${campaign.id}:`,
           error
         );
+        await logError('cron_check_deadlines', error, {
+          phase: 'process_campaign',
+          campaignId: campaign.id,
+          recipientName: campaign.recipient_name,
+        });
       }
 
       results.push(result);
@@ -166,6 +183,11 @@ async function handleCheckDeadlines() {
 
     console.log('[Deadline Check] Summary:', summary);
 
+    // 結果サマリーを info として記録（監査・可視化用）
+    if (summary.totalProcessed > 0 || summary.failed > 0) {
+      await logInfo('cron_check_deadlines', 'deadline check finished', summary);
+    }
+
     return NextResponse.json({
       success: true,
       summary,
@@ -174,6 +196,10 @@ async function handleCheckDeadlines() {
     });
   } catch (error) {
     console.error('[Deadline Check] Error:', error);
+    await logError('cron_check_deadlines', error, {
+      phase: 'top_level',
+      resultsCount: results.length,
+    });
     return NextResponse.json(
       {
         success: false,
@@ -210,6 +236,10 @@ async function notifyOrganizerOfExpired(
     // Send email via Resend API
     const RESEND_API_KEY = process.env.RESEND_API_KEY;
     if (!RESEND_API_KEY) {
+      await logError('cron_check_deadlines', new Error('RESEND_API_KEY not set'), {
+        phase: 'send_expired_email',
+        organizerId,
+      }, { level: 'warn' });
       return;
     }
 
@@ -250,7 +280,7 @@ async function notifyOrganizerOfExpired(
       </html>
     `;
 
-    await fetch('https://api.resend.com/emails', {
+    const resp = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${RESEND_API_KEY}`,
@@ -263,7 +293,21 @@ async function notifyOrganizerOfExpired(
         html,
       }),
     });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      await logError('cron_check_deadlines', new Error(`Resend API failed: ${resp.status}`), {
+        phase: 'send_expired_email',
+        organizerId,
+        status: resp.status,
+        body: text.slice(0, 500),
+      }, { level: 'warn' });
+    }
   } catch (error) {
     console.error('[Deadline Check] Error sending expiration email:', error);
+    await logError('cron_check_deadlines', error, {
+      phase: 'send_expired_email_catch',
+      organizerId,
+    }, { level: 'warn' });
   }
 }
