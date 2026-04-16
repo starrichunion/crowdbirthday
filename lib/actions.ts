@@ -12,7 +12,7 @@ import {
   EGiftType,
   CampaignStats,
 } from '@/lib/supabase/types';
-import { createPaymentSession, handlePaymentComplete } from '@/lib/stripe';
+import { createPaymentSession, handlePaymentComplete, getStripeServer } from '@/lib/stripe';
 import { redirect } from 'next/navigation';
 
 // ============================================================================
@@ -560,5 +560,160 @@ export async function getUserCampaigns(userId: string): Promise<{
       campaigns: [],
       error: error instanceof Error ? error.message : 'Failed to fetch campaigns',
     };
+  }
+}
+
+// ============================================================================
+// CAMPAIGN LIFECYCLE: delete / cancel+refund / archive
+// ============================================================================
+
+/**
+ * Hard delete a campaign.
+ * Conditions:
+ *   - caller must be the organizer
+ *   - contributions count must be 0
+ *   - status must be 'pending_approval' or 'active'
+ */
+export async function deleteCampaign(
+  organizerId: string,
+  campaignId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase = await createServerClient();
+    const { data: campaign, error: fetchError } = await supabase
+      .from('campaigns' as any)
+      .select('id, organizer_id, status')
+      .eq('id', campaignId)
+      .single();
+    if (fetchError || !campaign) return { success: false, error: 'Campaign not found' };
+    if ((campaign as any).organizer_id !== organizerId) return { success: false, error: 'Not authorized' };
+    if (!['pending_approval', 'active'].includes((campaign as any).status)) {
+      return { success: false, error: 'この状態の企画は削除できません (中止またはアーカイブを使用してください)' };
+    }
+    const { count, error: countError } = await supabase
+      .from('contributions' as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('campaign_id', campaignId);
+    if (countError) throw countError;
+    if ((count ?? 0) > 0) {
+      return { success: false, error: 'すでに応援が入っています。「中止（全額返金）」を使用してください。' };
+    }
+    const { error: deleteError } = await supabase
+      .from('campaigns' as any)
+      .delete()
+      .eq('id', campaignId);
+    if (deleteError) throw deleteError;
+    return { success: true };
+  } catch (error) {
+    console.error('deleteCampaign error:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Failed to delete campaign' };
+  }
+}
+
+/**
+ * Cancel a campaign and refund all completed contributions via Stripe.
+ * Conditions:
+ *   - caller must be the organizer
+ *   - status must be 'active' or 'funded' (egift_sent+ is not allowed)
+ */
+export async function cancelCampaign(
+  organizerId: string,
+  campaignId: string,
+  reason?: string
+): Promise<{ success: boolean; error?: string; refundedCount?: number; failedCount?: number; }> {
+  try {
+    const supabase = await createServerClient();
+    const stripe = getStripeServer();
+    const { data: campaign, error: fetchError } = await supabase
+      .from('campaigns' as any)
+      .select('id, organizer_id, status')
+      .eq('id', campaignId)
+      .single();
+    if (fetchError || !campaign) return { success: false, error: 'Campaign not found' };
+    if ((campaign as any).organizer_id !== organizerId) return { success: false, error: 'Not authorized' };
+    if (!['active', 'funded'].includes((campaign as any).status)) {
+      return { success: false, error: 'この状態の企画は中止できません (eギフト発行後は不可)' };
+    }
+    const { data: contributions, error: cError } = await supabase
+      .from('contributions' as any)
+      .select('id, stripe_payment_intent_id')
+      .eq('campaign_id', campaignId)
+      .eq('status', 'completed');
+    if (cError) throw cError;
+    let refundedCount = 0;
+    let failedCount = 0;
+    for (const c of (contributions || []) as any[]) {
+      try {
+        if (!c.stripe_payment_intent_id) throw new Error('stripe_payment_intent_id missing');
+        let paymentIntentId: string | null = null;
+        if (c.stripe_payment_intent_id.startsWith('cs_')) {
+          const session = await stripe.checkout.sessions.retrieve(c.stripe_payment_intent_id);
+          paymentIntentId = typeof session.payment_intent === 'string'
+            ? session.payment_intent
+            : (session.payment_intent as any)?.id ?? null;
+        } else if (c.stripe_payment_intent_id.startsWith('pi_')) {
+          paymentIntentId = c.stripe_payment_intent_id;
+        }
+        if (!paymentIntentId) throw new Error('No payment_intent found for contribution');
+        await stripe.refunds.create({ payment_intent: paymentIntentId });
+        await supabase.from('contributions' as any).update({ status: 'refunded' }).eq('id', c.id);
+        refundedCount++;
+      } catch (err) {
+        console.error(`[cancelCampaign] refund failed for contribution ${c.id}:`, err);
+        failedCount++;
+      }
+    }
+    if (refundedCount === 0 && failedCount > 0) {
+      return {
+        success: false,
+        error: `全${failedCount}件の返金に失敗しました。Stripe ダッシュボードで確認してください。`,
+        refundedCount,
+        failedCount,
+      };
+    }
+    const { error: updateError } = await supabase
+      .from('campaigns' as any)
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancel_reason: reason ?? null,
+      })
+      .eq('id', campaignId);
+    if (updateError) throw updateError;
+    return { success: true, refundedCount, failedCount };
+  } catch (error) {
+    console.error('cancelCampaign error:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Failed to cancel campaign' };
+  }
+}
+
+/**
+ * Archive a campaign (soft hide). Hidden from dashboard listings by default.
+ * Conditions:
+ *   - caller must be the organizer
+ *   - any current status allowed; typically used for completed states.
+ */
+export async function archiveCampaign(
+  organizerId: string,
+  campaignId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase = await createServerClient();
+    const { data: campaign, error: fetchError } = await supabase
+      .from('campaigns' as any)
+      .select('id, organizer_id, status')
+      .eq('id', campaignId)
+      .single();
+    if (fetchError || !campaign) return { success: false, error: 'Campaign not found' };
+    if ((campaign as any).organizer_id !== organizerId) return { success: false, error: 'Not authorized' };
+    const { error: updateError } = await supabase
+      .from('campaigns' as any)
+      .update({ status: 'archived' })
+      .eq('id', campaignId);
+    if (updateError) throw updateError;
+    return { success: true };
+  } catch (error) {
+    console.error('archiveCampaign error:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Failed to archive campaign' };
   }
 }
