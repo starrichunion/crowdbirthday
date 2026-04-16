@@ -95,9 +95,47 @@ export default function CampaignClientView({
   const finalAmount =
     selectedAmount || (customAmount ? parseInt(customAmount) : 0);
 
+  // Handle payment success redirect from Stripe
+  const [paymentStatus, setPaymentStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
+
   useEffect(() => {
     loadCampaign();
+    // Check if returning from Stripe checkout
+    const urlParams = new URLSearchParams(window.location.search);
+    const payment = urlParams.get('payment');
+    const sessionId = urlParams.get('session_id');
+    if (payment === 'success' && sessionId) {
+      processPaymentCompletion(sessionId);
+    }
   }, [params.id]);
+
+  async function processPaymentCompletion(sessionId: string) {
+    setPaymentStatus('processing');
+    try {
+      const res = await fetch('/api/checkout/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPaymentStatus('success');
+        // Reload campaign data to reflect the new contribution
+        await loadCampaign();
+        // Clean URL params without reload
+        const url = new URL(window.location.href);
+        url.searchParams.delete('payment');
+        url.searchParams.delete('session_id');
+        window.history.replaceState({}, '', url.pathname);
+      } else {
+        console.error('Payment completion error:', data.error);
+        setPaymentStatus('error');
+      }
+    } catch (err) {
+      console.error('Payment completion failed:', err);
+      setPaymentStatus('error');
+    }
+  }
 
   // 欲しい物URL が設定されていれば OGP プレビューを取得
   useEffect(() => {
@@ -193,6 +231,21 @@ export default function CampaignClientView({
     );
   }
 
+  // Payment success/error banner
+  const paymentBanner = paymentStatus === 'success' ? (
+    <div className="mx-4 mt-4 p-4 bg-green-50 border border-green-200 rounded-xl text-green-800 text-center font-medium">
+      🎉 支援ありがとうございます！金額が反映されました。
+    </div>
+  ) : paymentStatus === 'processing' ? (
+    <div className="mx-4 mt-4 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-800 text-center font-medium animate-pulse">
+      決済を処理中です...
+    </div>
+  ) : paymentStatus === 'error' ? (
+    <div className="mx-4 mt-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-center font-medium">
+      決済の反映に問題がありました。しばらくしてからページを更新してください。
+    </div>
+  ) : null;
+
   const isFriend = campaign.mode === 'friend';
   const remaining = daysRemaining(campaign.deadline);
   const isFunded =
@@ -213,6 +266,8 @@ export default function CampaignClientView({
 
   return (
     <div className={`min-h-screen ${bgLight}`}>
+      {/* Payment status banner */}
+      {paymentBanner}
       {/* Cancelled banner */}
       {campaign.status === 'cancelled' && (
         <div className="bg-rose-50 border-b border-rose-200 px-6 py-3">
