@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Gift, Share2, Eye, Plus, Loader2, MessageCircle } from 'lucide-react';
+import { Gift, Share2, Eye, Plus, Loader2, MessageCircle, Trash2, Ban, Archive as ArchiveIcon, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { initLiff, ensureLineLogin, getLineProfile } from '@/lib/liff';
-import { upsertUserFromLineProfile, getUserCampaigns } from '@/lib/actions';
+import { upsertUserFromLineProfile, getUserCampaigns, deleteCampaign, cancelCampaign, archiveCampaign } from '@/lib/actions';
 
 interface DashboardCampaign {
   id: string;
@@ -26,6 +26,16 @@ export default function DashboardPage() {
   const [userName, setUserName] = useState<string>('');
   const [userAvatar, setUserAvatar] = useState<string>('');
   const [loginLoading, setLoginLoading] = useState(false);
+
+  // 企画ライフサイクル操作用 (削除 / 中止 / アーカイブ)
+  const [userId, setUserId] = useState<string>('');
+  const [actionModal, setActionModal] = useState<
+    { kind: 'delete' | 'cancel' | 'archive'; campaign: DashboardCampaign } | null
+  >(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -71,6 +81,8 @@ export default function DashboardPage() {
         setLoading(false);
         return;
       }
+
+      setUserId((userRes as any).userId || '');
 
       const result = await getUserCampaigns(userRes.userId);
       if (result.error) {
@@ -173,7 +185,75 @@ export default function DashboardPage() {
       case 'completed': return { text: '完了', bg: 'bg-blue-100 text-blue-700' };
       case 'pending_approval': return { text: '承認待ち', bg: 'bg-yellow-100 text-yellow-700' };
       case 'expired': return { text: '期限切れ', bg: 'bg-gray-100 text-gray-600' };
+      case 'cancelled': return { text: '中止', bg: 'bg-rose-100 text-rose-700' };
+      case 'archived': return { text: 'アーカイブ', bg: 'bg-slate-100 text-slate-600' };
       default: return { text: status, bg: 'bg-gray-100 text-gray-600' };
+    }
+  };
+
+  // アーカイブされた企画は既定では非表示
+  const visibleCampaigns = showArchived
+    ? campaigns
+    : campaigns.filter((c) => c.status !== 'archived');
+  const hasArchived = campaigns.some((c) => c.status === 'archived');
+
+  const openAction = (
+    kind: 'delete' | 'cancel' | 'archive',
+    campaign: DashboardCampaign
+  ) => {
+    setActionError(null);
+    setCancelReason('');
+    setActionModal({ kind, campaign });
+  };
+
+  const closeAction = () => {
+    if (actionLoading) return;
+    setActionModal(null);
+    setActionError(null);
+  };
+
+  const executeAction = async () => {
+    if (!actionModal || !userId) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const { kind, campaign } = actionModal;
+      let res: { success: boolean; error?: string; refundedCount?: number; failedCount?: number };
+      if (kind === 'delete') {
+        res = await deleteCampaign(userId, campaign.id);
+      } else if (kind === 'cancel') {
+        res = await cancelCampaign(
+          userId,
+          campaign.id,
+          cancelReason.trim() || undefined
+        );
+      } else {
+        res = await archiveCampaign(userId, campaign.id);
+      }
+      if (!res.success) {
+        setActionError(res.error || '処理に失敗しました');
+        return;
+      }
+      if (kind === 'delete') {
+        setCampaigns((prev) => prev.filter((c) => c.id !== campaign.id));
+      } else if (kind === 'cancel') {
+        setCampaigns((prev) =>
+          prev.map((c) =>
+            c.id === campaign.id ? { ...c, status: 'cancelled' } : c
+          )
+        );
+      } else {
+        setCampaigns((prev) =>
+          prev.map((c) =>
+            c.id === campaign.id ? { ...c, status: 'archived' } : c
+          )
+        );
+      }
+      setActionModal(null);
+    } catch (err: any) {
+      setActionError(err?.message || '処理に失敗しました');
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -203,7 +283,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {campaigns.length === 0 && !error ? (
+        {visibleCampaigns.length === 0 && !error ? (
           <div className="text-center py-16">
             <div className="text-6xl mb-4">🎉</div>
             <h2 className="text-lg font-bold text-gray-900 mb-2">
@@ -221,7 +301,7 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {campaigns.map((campaign) => {
+            {visibleCampaigns.map((campaign) => {
               const sl = statusLabel(campaign.status);
               return (
                 <div key={campaign.id} className="bg-white rounded-2xl shadow-sm p-5">
@@ -273,6 +353,39 @@ export default function DashboardPage() {
                       <span className="text-xs font-semibold text-pink-700">プレビュー</span>
                     </button>
                   </div>
+
+                  {/* 企画ライフサイクル操作 (状態に応じて出し分け) */}
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {(campaign.status === 'pending_approval' ||
+                      campaign.status === 'active') && (
+                      <button
+                        onClick={() => openAction('delete', campaign)}
+                        className="flex-1 min-w-[40%] flex items-center justify-center gap-1 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold transition-all"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> 削除
+                      </button>
+                    )}
+                    {(campaign.status === 'active' ||
+                      campaign.status === 'funded') && (
+                      <button
+                        onClick={() => openAction('cancel', campaign)}
+                        className="flex-1 min-w-[40%] flex items-center justify-center gap-1 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-semibold transition-all"
+                      >
+                        <Ban className="w-3.5 h-3.5" /> 中止・返金
+                      </button>
+                    )}
+                    {(campaign.status === 'funded' ||
+                      campaign.status === 'egift_sent' ||
+                      campaign.status === 'expired' ||
+                      campaign.status === 'cancelled') && (
+                      <button
+                        onClick={() => openAction('archive', campaign)}
+                        className="flex-1 min-w-[40%] flex items-center justify-center gap-1 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold transition-all"
+                      >
+                        <ArchiveIcon className="w-3.5 h-3.5" /> アーカイブ
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -289,7 +402,123 @@ export default function DashboardPage() {
             </button>
           </div>
         )}
+
+        {/* アーカイブ済みの企画を表示する切替 (該当があるときのみ表示) */}
+        {hasArchived && (
+          <div className="mt-6 flex items-center justify-center">
+            <label className="inline-flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+                className="rounded border-gray-300"
+              />
+              アーカイブ済みも表示
+            </label>
+          </div>
+        )}
       </div>
+
+      {/* 確認モーダル (削除 / 中止 / アーカイブ) */}
+      {actionModal && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center"
+          onClick={closeAction}
+        >
+          <div
+            className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-gray-900">
+                  {actionModal.kind === 'delete' && '企画を削除しますか？'}
+                  {actionModal.kind === 'cancel' && '企画を中止しますか？'}
+                  {actionModal.kind === 'archive' && '企画をアーカイブしますか？'}
+                </h2>
+                <button
+                  onClick={closeAction}
+                  disabled={actionLoading}
+                  className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center disabled:opacity-50"
+                >
+                  <X className="w-4 h-4 text-gray-500" />
+                </button>
+              </div>
+
+              <p className="text-sm text-gray-600 mb-4 leading-relaxed">
+                {actionModal.kind === 'delete' && (
+                  <>
+                    「{actionModal.campaign.recipient_name}へのお祝い」を
+                    完全に削除します。応援が1件でも入っている場合は削除できません。
+                    この操作は取り消せません。
+                  </>
+                )}
+                {actionModal.kind === 'cancel' && (
+                  <>
+                    「{actionModal.campaign.recipient_name}へのお祝い」を中止し、
+                    これまでに集まった応援を全額返金します。
+                    返金処理は Stripe 経由で即時開始されます。
+                  </>
+                )}
+                {actionModal.kind === 'archive' && (
+                  <>
+                    「{actionModal.campaign.recipient_name}へのお祝い」を
+                    マイページから非表示にします。データは削除されません。
+                    「アーカイブ済みも表示」からいつでも戻せます。
+                  </>
+                )}
+              </p>
+
+              {actionModal.kind === 'cancel' && (
+                <div className="mb-4">
+                  <label className="block text-xs text-gray-500 mb-1">
+                    中止理由 (任意 — 応援してくれた方には表示されません)
+                  </label>
+                  <textarea
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                    rows={2}
+                    placeholder="例: 受取人の都合により中止"
+                    className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-pink-200"
+                  />
+                </div>
+              )}
+
+              {actionError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 mb-3">
+                  <p className="text-xs text-red-700">{actionError}</p>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={closeAction}
+                  disabled={actionLoading}
+                  className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold text-sm hover:bg-gray-200 disabled:opacity-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={executeAction}
+                  disabled={actionLoading}
+                  className={`flex-1 py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-60 flex items-center justify-center gap-2 ${
+                    actionModal.kind === 'delete'
+                      ? 'bg-red-500 hover:bg-red-600'
+                      : actionModal.kind === 'cancel'
+                      ? 'bg-amber-500 hover:bg-amber-600'
+                      : 'bg-slate-600 hover:bg-slate-700'
+                  }`}
+                >
+                  {actionLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {actionModal.kind === 'delete' && '削除する'}
+                  {actionModal.kind === 'cancel' && '中止して返金する'}
+                  {actionModal.kind === 'archive' && 'アーカイブする'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
