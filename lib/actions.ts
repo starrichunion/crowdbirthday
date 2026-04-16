@@ -115,7 +115,9 @@ export async function createFriendCampaign(formData: {
   recipientName: string;
   category: CampaignCategory;
   wishItem?: string;
+  wishItemUrl?: string;
   wishPrice?: number;
+  snsLinks?: Array<{ label?: string; url: string }>;
   description: string;
   deadline?: string;
 }): Promise<{ id: string; approvalToken: string; success: boolean; error?: string }> {
@@ -135,7 +137,9 @@ export async function createFriendCampaign(formData: {
           mode: 'friend' as CampaignMode,
           category: formData.category,
           wish_item: formData.wishItem || null,
+          wish_item_url: formData.wishItemUrl || null,
           wish_price: formData.wishPrice || null,
+          sns_links: formData.snsLinks || [],
           description: formData.description,
           status: 'pending_approval' as CampaignStatus,
           deadline: formData.deadline || null,
@@ -186,7 +190,9 @@ export async function createFanCampaign(formData: {
   organizerId: string;
   category: CampaignCategory;
   wishItem?: string;
+  wishItemUrl?: string;
   wishPrice?: number;
+  snsLinks?: Array<{ label?: string; url: string }>;
   description: string;
   deadline?: string;
 }): Promise<{ id: string; slug: string; success: boolean; error?: string }> {
@@ -216,7 +222,9 @@ export async function createFanCampaign(formData: {
           mode: 'fan' as CampaignMode,
           category: formData.category,
           wish_item: formData.wishItem || null,
+          wish_item_url: formData.wishItemUrl || null,
           wish_price: formData.wishPrice || null,
+          sns_links: formData.snsLinks || [],
           description: formData.description,
           status: 'active' as CampaignStatus,
           deadline: formData.deadline || null,

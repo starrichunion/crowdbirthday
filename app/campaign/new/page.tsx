@@ -32,6 +32,7 @@ interface FriendFormData {
   theme: string;
   recipient: string;
   wish: string;
+  wishUrl: string;
   wishPrice: string;
   message: string;
 }
@@ -43,11 +44,47 @@ interface FanFormData {
   linePictureUrl?: string;
   activityName: string;
   genre: string;
-  snsLink: string;
+  /** 最大3件のSNS/サイトURL */
+  snsLinks: string[];
   wishItem: string;
   targetAmount: string;
   productUrl: string;
   fanMessage: string;
+}
+
+/**
+ * URL文字列の配列を {label, url} 配列に正規化。
+ * - 空文字や不正URLは除外
+ * - https://が無ければ自動付与
+ * - ホスト名から代表的なSNSのラベルを推測
+ */
+function normalizeSnsLinks(
+  raw: string[]
+): Array<{ label?: string; url: string }> {
+  const out: Array<{ label?: string; url: string }> = [];
+  for (const r of raw) {
+    let v = (r || '').trim();
+    if (\!v) continue;
+    if (\!/^https?:\/\//i.test(v)) v = 'https://' + v;
+    try {
+      const u = new URL(v);
+      const host = u.hostname.replace(/^www\./, '').toLowerCase();
+      let label: string | undefined;
+      if (host === 'x.com' || host === 'twitter.com') label = 'X';
+      else if (host === 'instagram.com') label = 'Instagram';
+      else if (host === 'tiktok.com') label = 'TikTok';
+      else if (host.endsWith('youtube.com') || host === 'youtu.be')
+        label = 'YouTube';
+      else if (host === 'note.com') label = 'note';
+      else if (host === 'github.com') label = 'GitHub';
+      else if (host === 'facebook.com') label = 'Facebook';
+      else if (host === 'threads.net') label = 'Threads';
+      out.push({ label, url: u.toString() });
+    } catch {
+      // 不正URLは捨てる
+    }
+  }
+  return out;
 }
 
 export default function CampaignNewPage() {
@@ -60,6 +97,7 @@ export default function CampaignNewPage() {
     theme: 'birthday',
     recipient: '',
     wish: '',
+    wishUrl: '',
     wishPrice: '',
     message: '',
   });
@@ -68,7 +106,7 @@ export default function CampaignNewPage() {
     accountConnected: false,
     activityName: '',
     genre: '',
-    snsLink: '',
+    snsLinks: [''],
     wishItem: '',
     targetAmount: '',
     productUrl: '',
@@ -231,6 +269,7 @@ export default function CampaignNewPage() {
         recipientName: friendForm.recipient,
         category: friendForm.theme as CampaignCategory,
         wishItem: friendForm.wish || undefined,
+        wishItemUrl: friendForm.wishUrl?.trim() || undefined,
         wishPrice: friendForm.wishPrice ? Number(friendForm.wishPrice) : undefined,
         description: friendForm.message,
       });
@@ -277,6 +316,8 @@ export default function CampaignNewPage() {
         organizerId: userRes.userId,
         category: 'birthday' as CampaignCategory, // ファンモードはカテゴリ未選択なのでデフォルト
         wishItem: fanForm.wishItem,
+        wishItemUrl: fanForm.productUrl?.trim() || undefined,
+        snsLinks: normalizeSnsLinks(fanForm.snsLinks),
         wishPrice: fanForm.targetAmount ? Number(fanForm.targetAmount) : undefined,
         description: fanForm.fanMessage,
       });
@@ -457,6 +498,12 @@ export default function CampaignNewPage() {
                 className="w-full px-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-300 mb-3"
               />
               <input
+                value={friendForm.wishUrl}
+                onChange={(e) => setFriendForm({ ...friendForm, wishUrl: e.target.value })}
+                placeholder="商品URL（任意）例：https://amazon.co.jp/dp/..."
+                className="w-full px-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-300 mb-3"
+              />
+              <input
                 value={friendForm.wishPrice}
                 onChange={(e) => setFriendForm({ ...friendForm, wishPrice: e.target.value })}
                 placeholder="目安の金額（任意）例：280000"
@@ -594,14 +641,63 @@ export default function CampaignNewPage() {
         />
 
         <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-          SNSリンク <span className="text-gray-400">任意</span>
+          SNS / サイトリンク <span className="text-gray-400">任意・最大3件</span>
         </label>
-        <input
-          placeholder="例：https://x.com/hinata_music"
-          value={fanForm.snsLink}
-          onChange={(e) => setFanForm({ ...fanForm, snsLink: e.target.value })}
-          className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-300 mb-4"
-        />
+        <div className="space-y-2 mb-2">
+          {fanForm.snsLinks.map((link, i) => (
+            <div key={i} className="flex gap-2">
+              <input
+                placeholder={
+                  i === 0
+                    ? '例：https://x.com/hinata_music'
+                    : i === 1
+                      ? '例：https://instagram.com/hinata'
+                      : '例：https://youtube.com/@hinata'
+                }
+                value={link}
+                onChange={(e) => {
+                  const next = [...fanForm.snsLinks];
+                  next[i] = e.target.value;
+                  setFanForm({ ...fanForm, snsLinks: next });
+                }}
+                className="flex-1 px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-300"
+              />
+              {fanForm.snsLinks.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = fanForm.snsLinks.filter((_, idx) => idx \!== i);
+                    setFanForm({
+                      ...fanForm,
+                      snsLinks: next.length ? next : [''],
+                    });
+                  }}
+                  className="w-10 rounded-xl border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 transition-colors"
+                  aria-label="削除"
+                >
+                  <X className="w-4 h-4 mx-auto" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        {fanForm.snsLinks.length < 3 && (
+          <button
+            type="button"
+            onClick={() =>
+              setFanForm({
+                ...fanForm,
+                snsLinks: [...fanForm.snsLinks, ''],
+              })
+            }
+            className="text-xs text-violet-600 font-semibold hover:text-violet-700 mb-4"
+          >
+            ＋ リンクを追加
+          </button>
+        )}
+        <p className="text-xs text-gray-400 mb-4">
+          X / Instagram / TikTok / YouTube / note などURLそのままでOK
+        </p>
       </div>,
 
       // Step 2: Wish Item & Message

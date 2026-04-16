@@ -10,7 +10,10 @@ export default function Footer() {
           <p className="text-sm text-gray-500">
             © 2026 CrowdBirthday. All rights reserved.
           </p>
-          <div className="flex items-center gap-6 text-sm">
+          <div className="flex items-center gap-6 text-sm flex-wrap justify-center">
+            <Link href="/about" className="text-gray-600 hover:text-pink-500 transition-colors">
+              サービスについて
+            </Link>
             <Link href="/legal/terms" className="text-gray-600 hover:text-pink-500 transition-colors">
               利用規約
             </Link>

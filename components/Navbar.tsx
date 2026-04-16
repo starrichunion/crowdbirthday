@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Gift } from 'lucide-react';
+import { Gift, HelpCircle } from 'lucide-react';
 
 interface NavbarProps {
   showOnLandingOnly?: boolean;
@@ -20,6 +20,22 @@ export default function Navbar({ showOnLandingOnly }: NavbarProps) {
 
           {/* Right Section */}
           <div className="flex items-center gap-3">
+            <Link
+              href="/about"
+              title="クラウドバースデーとは？"
+              className="hidden sm:inline-flex items-center gap-1 text-sm text-gray-600 hover:text-pink-500 font-medium transition-colors"
+            >
+              <HelpCircle className="w-4 h-4" />
+              サービスについて
+            </Link>
+            <Link
+              href="/about"
+              title="クラウドバースデーとは？"
+              className="sm:hidden inline-flex items-center justify-center w-9 h-9 rounded-full text-gray-500 hover:text-pink-500 hover:bg-pink-50 transition-colors"
+              aria-label="サービスについて"
+            >
+              <HelpCircle className="w-5 h-5" />
+            </Link>
             <Link href="/auth/login" className="text-sm text-gray-700 hover:text-pink-500 font-medium transition-colors">
               ログイン
             </Link>

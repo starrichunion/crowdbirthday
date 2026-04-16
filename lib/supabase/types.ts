@@ -28,6 +28,12 @@ export type CampaignCategory =
   | 'retirement'
   | 'thanks';
 
+export type SnsLink = {
+  /** 表示用ラベル (省略時はホスト名から推測) */
+  label?: string;
+  url: string;
+};
+
 export type Campaign = {
   id: string;
   organizer_id: string;
@@ -36,7 +42,9 @@ export type Campaign = {
   mode: CampaignMode;
   category: CampaignCategory;
   wish_item: string | null;
+  wish_item_url: string | null;
   wish_price: number | null;
+  sns_links: SnsLink[];
   description: string | null;
   status: CampaignStatus;
   deadline: string | null;
@@ -94,7 +102,9 @@ export type CampaignStats = {
   category: CampaignCategory;
   recipient_name: string;
   wish_item: string | null;
+  wish_item_url: string | null;
   wish_price: number | null;
+  sns_links: SnsLink[];
   status: CampaignStatus;
   deadline: string | null;
   is_public: boolean;
