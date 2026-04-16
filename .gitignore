@@ -34,3 +34,4 @@ next-env.d.ts
 
 # preview
 preview.html
+package-lock.json

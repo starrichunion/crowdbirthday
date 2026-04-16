@@ -145,11 +145,10 @@ export default function CampaignClientView({
     if (!campaign || finalAmount < 500) return;
     setSubmitting(true);
     try {
-      const res = await fetch('/api/webhook/stripe', {
+      const res = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'create_checkout',
           campaignId: campaign.id,
           amount: finalAmount,
           contributorName: anonymous ? '匿名' : contributorName,
@@ -160,6 +159,9 @@ export default function CampaignClientView({
       const data = await res.json();
       if (data.checkoutUrl) {
         window.location.href = data.checkoutUrl;
+      } else {
+        console.error('Checkout response missing checkoutUrl:', data);
+        alert(data.error || '決済ページを開けませんでした。もう一度お試しください。');
       }
     } catch (error) {
       console.error('Checkout error:', error);

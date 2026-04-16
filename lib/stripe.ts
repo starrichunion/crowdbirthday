@@ -55,8 +55,8 @@ export async function createPaymentSession({
       },
     ],
     mode: 'payment',
-    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/campaigns/${campaignId}/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/campaigns/${campaignId}`,
+    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/campaign/${campaignId}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/campaign/${campaignId}?payment=cancelled`,
     metadata: {
       campaignId,
       contributorName,
