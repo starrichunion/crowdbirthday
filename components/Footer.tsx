@@ -10,20 +10,29 @@ export default function Footer() {
           <p className="text-sm text-gray-500">
             © 2026 CrowdBirthday. All rights reserved.
           </p>
-          <div className="flex items-center gap-6 text-sm flex-wrap justify-center">
-            <Link href="/about" className="text-gray-600 hover:text-pink-500 transition-colors">
-              サービスについて
-            </Link>
-            <Link href="/legal/terms" className="text-gray-600 hover:text-pink-500 transition-colors">
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm">
+            <Link
+              href="/legal/terms"
+              className="text-gray-600 hover:text-pink-500 transition-colors"
+            >
               利用規約
             </Link>
-            <Link href="/legal/privacy" className="text-gray-600 hover:text-pink-500 transition-colors">
+            <Link
+              href="/legal/privacy"
+              className="text-gray-600 hover:text-pink-500 transition-colors"
+            >
               プライバシーポリシー
             </Link>
-            <Link href="/legal/tokushoho" className="text-gray-600 hover:text-pink-500 transition-colors">
-              特定商取引法表記
+            <Link
+              href="/legal/tokushoho"
+              className="text-gray-600 hover:text-pink-500 transition-colors"
+            >
+              特商法表記
             </Link>
-            <Link href="mailto:hello@crowdbirthday.com" className="text-gray-600 hover:text-pink-500 transition-colors">
+            <Link
+              href="mailto:starrichunion@gmail.com"
+              className="text-gray-600 hover:text-pink-500 transition-colors"
+            >
               お問い合わせ
             </Link>
           </div>

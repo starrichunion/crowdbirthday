@@ -161,7 +161,7 @@ export default function TermsPage() {
             本規約に関するご質問やご指摘がある場合は、以下の方法でお問い合わせください。
           </p>
           <p className="mt-4">
-            メール: support@crowdbirthday.com
+            メール: starrichunion@gmail.com
           </p>
         </section>
 

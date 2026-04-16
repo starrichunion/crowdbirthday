@@ -167,7 +167,7 @@ export default function PrivacyPage() {
             </li>
           </ul>
           <p className="mt-4">
-            これらの権利を行使したい場合は、privacy@crowdbirthday.comまでお問い合わせください。
+            これらの権利を行使したい場合は、starrichunion@gmail.comまでお問い合わせください。
           </p>
         </section>
 
@@ -240,7 +240,7 @@ export default function PrivacyPage() {
             プライバシーに関するご質問、ご懸念、または権利行使のご希望については、以下にお問い合わせください。
           </p>
           <p className="mt-4">
-            メール: privacy@crowdbirthday.com
+            メール: starrichunion@gmail.com
           </p>
         </section>
 
