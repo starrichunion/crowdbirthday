@@ -97,7 +97,7 @@ export async function handlePaymentComplete(sessionId: string): Promise<{
         {
           campaign_id: session.metadata.campaignId,
           contributor_name: session.metadata.contributorName,
-          amount: (session.amount_total || 0) / 100, // Convert from cents to JPY
+          amount: session.amount_total || 0, // JPY is zero-decimal, no conversion needed
           message: session.metadata.message || null,
           is_anonymous: session.metadata.isAnonymous === 'true',
           stripe_payment_intent_id: session.payment_intent as string,

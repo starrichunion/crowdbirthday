@@ -276,7 +276,7 @@ export async function POST(
     // Fetch organizer info to send confirmation email
     const { data: organizer, error: organizerError } = await supabase
       .from('users' as any)
-      .select('email, display_name')
+      .select('egift_email, display_name')
       .eq('id', campaign.organizer_id)
       .single();
 
@@ -285,7 +285,7 @@ export async function POST(
 
     if (!organizerError && organizer) {
       await sendApprovalApprovedNotification(
-        organizer.email,
+        organizer.egift_email,
         campaign.recipient_name,
         recipientEmail
       );

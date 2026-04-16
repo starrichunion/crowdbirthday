@@ -225,11 +225,11 @@ async function notifyOrganizerOfExpired(
     // Fetch organizer email
     const { data: organizer } = await supabase
       .from('users' as any)
-      .select('email, display_name')
+      .select('egift_email, display_name')
       .eq('id', organizerId)
       .single();
 
-    if (!organizer?.email) {
+    if (!organizer?.egift_email) {
       return;
     }
 
@@ -288,7 +288,7 @@ async function notifyOrganizerOfExpired(
       },
       body: JSON.stringify({
         from: 'CrowdBirthday <noreply@crowdbirthday.com>',
-        to: organizer.email,
+        to: organizer.egift_email,
         subject: '⏰ キャンペーンの期限が切れました',
         html,
       }),

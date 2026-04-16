@@ -90,7 +90,7 @@ export default function Home() {
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">4ステップで完成</h2>
-            <p className="text-lg text-gray-600">簡単3ステップでお祝いを届けられます</p>
+            <p className="text-lg text-gray-600">簡単4ステップでお祝いを届けられます</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

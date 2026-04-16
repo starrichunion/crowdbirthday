@@ -329,11 +329,11 @@ export async function sendEGift(
     // Fetch recipient email
     const { data: recipient, error: recipientError } = await supabase
       .from('users' as any)
-      .select('email')
+      .select('egift_email')
       .eq('id', campaign.recipient_id)
       .single();
 
-    if (recipientError || !recipient || !recipient.email) {
+    if (recipientError || !recipient || !recipient.egift_email) {
       throw new Error('Recipient email not found');
     }
 
@@ -370,7 +370,7 @@ export async function sendEGift(
     // Purchase gift from provider
     const purchaseResult = await provider.purchaseGift(
       amountForGift,
-      recipient.email,
+      recipient.egift_email,
       campaignId
     );
 
@@ -386,7 +386,7 @@ export async function sendEGift(
           campaign_id: campaignId,
           gift_type: giftType,
           amount: amountForGift,
-          recipient_email: recipient.email,
+          recipient_email: recipient.egift_email,
           status: 'purchased',
           external_order_id: purchaseResult.orderId,
           sent_at: new Date().toISOString(),
@@ -410,7 +410,7 @@ export async function sendEGift(
 
     // Send notification email to recipient
     await sendEGiftNotification(
-      recipient.email,
+      recipient.egift_email,
       campaign.recipient_name,
       campaign.wish_price
         ? `¥${campaign.wish_price.toLocaleString('ja-JP')}のお祝い`

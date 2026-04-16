@@ -26,6 +26,8 @@ import {
 } from '@/lib/email';
 import { logError } from '@/lib/logger';
 
+// NOTE: This endpoint is ONLY for receiving Stripe webhook events.
+// For creating Checkout Sessions, use /api/checkout/route.ts instead.
 export async function POST(request: NextRequest) {
   const body = await request.text();
   const signature = request.headers.get('stripe-signature');
@@ -103,7 +105,7 @@ export async function POST(request: NextRequest) {
     if (result.action === 'contribution_created') {
       const { metadata } = result;
 
-      const amountJPY = Math.round((metadata.amount || 0) / 100);
+      const amountJPY = metadata.amount || 0; // JPY is zero-decimal, no conversion needed
 
       const { data: contribution, error: contributionError } = await supabase
         .from('contributions')
@@ -199,14 +201,14 @@ export async function POST(request: NextRequest) {
 
       const { data: organizer, error: organizerError } = await supabase
         .from('users')
-        .select('email, display_name')
+        .select('egift_email, display_name')
         .eq('id', campaign.organizer_id)
         .single();
 
       if (!organizerError && organizer) {
         try {
           await sendNewContributionNotification(
-            organizer.email,
+            organizer.egift_email,
             campaign.recipient_name,
             amountJPY,
             metadata.contributorName,
@@ -214,7 +216,7 @@ export async function POST(request: NextRequest) {
           );
           if (isFunded) {
             await sendCampaignFundedNotification(
-              organizer.email,
+              organizer.egift_email,
               campaign.recipient_name,
               totalRaised,
               campaign.wish_price!
@@ -226,7 +228,7 @@ export async function POST(request: NextRequest) {
             phase: 'notify_organizer',
             eventId: event.id,
             campaignId: metadata.campaignId,
-            organizerEmail: organizer.email,
+            organizerEmail: organizer.egift_email,
           }, { level: 'warn' });
         }
       }
