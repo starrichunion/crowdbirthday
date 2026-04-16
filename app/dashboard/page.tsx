@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Gift, Share2, Eye, ChevronRight, Plus, Loader2 } from 'lucide-react';
+import { Gift, Share2, Eye, Plus, Loader2, MessageCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { initLiff, getLineProfile } from '@/lib/liff';
+import { initLiff, ensureLineLogin, getLineProfile } from '@/lib/liff';
 import { upsertUserFromLineProfile, getUserCampaigns } from '@/lib/actions';
 
 interface DashboardCampaign {
@@ -21,53 +21,101 @@ export default function DashboardPage() {
   const router = useRouter();
   const [campaigns, setCampaigns] = useState<DashboardCampaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [needsLogin, setNeedsLogin] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>('');
   const [userAvatar, setUserAvatar] = useState<string>('');
+  const [loginLoading, setLoginLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
         const liff = await initLiff();
+
         if (\!liff.isLoggedIn()) {
-          router.push('/auth/login');
+          // LIFF未ログイン → ログインボタンを表示（リダイレクトしない）
+          setNeedsLogin(true);
+          setLoading(false);
           return;
         }
 
-        const profile = await getLineProfile();
-        if (\!profile) {
-          router.push('/auth/login');
-          return;
-        }
-
-        setUserName(profile.displayName);
-        setUserAvatar(profile.pictureUrl || '');
-
-        const userRes = await upsertUserFromLineProfile({
-          lineUserId: profile.userId,
-          displayName: profile.displayName,
-          pictureUrl: profile.pictureUrl,
-        });
-
-        if (\!userRes.success) {
-          setError('ユーザー情報の取得に失敗しました');
-          return;
-        }
-
-        const result = await getUserCampaigns(userRes.userId);
-        if (result.error) {
-          setError(result.error);
-        } else {
-          setCampaigns(result.campaigns as unknown as DashboardCampaign[]);
-        }
+        await loadDashboardData();
       } catch (err: any) {
-        console.error('Dashboard load error:', err);
-        setError('データの取得に失敗しました');
-      } finally {
+        console.error('Dashboard init error:', err);
+        setNeedsLogin(true);
         setLoading(false);
       }
     })();
-  }, [router]);
+  }, []);
+
+  const loadDashboardData = async () => {
+    try {
+      const profile = await getLineProfile();
+      if (\!profile) {
+        setNeedsLogin(true);
+        setLoading(false);
+        return;
+      }
+
+      setUserName(profile.displayName);
+      setUserAvatar(profile.pictureUrl || '');
+
+      const userRes = await upsertUserFromLineProfile({
+        lineUserId: profile.userId,
+        displayName: profile.displayName,
+        pictureUrl: profile.pictureUrl,
+      });
+
+      if (\!userRes.success) {
+        setError('ユーザー情報の取得に失敗しました');
+        setLoading(false);
+        return;
+      }
+
+      const result = await getUserCampaigns(userRes.userId);
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setCampaigns(result.campaigns as unknown as DashboardCampaign[]);
+      }
+    } catch (err: any) {
+      console.error('Dashboard load error:', err);
+      setError('データの取得に失敗しました');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLineLogin = async () => {
+    setLoginLoading(true);
+    try {
+      // LINE OAuth → 完了後に /dashboard に戻ってくる
+      await ensureLineLogin(window.location.href);
+    } catch (err: any) {
+      console.error('LINE login error:', err);
+      setLoginLoading(false);
+    }
+  };
+
+  // OAuth リダイレクト後の復帰処理
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (\!params.has('code')) return;
+
+    (async () => {
+      try {
+        await initLiff();
+        // URL からクエリ除去
+        window.history.replaceState({}, '', '/dashboard');
+        setNeedsLogin(false);
+        setLoading(true);
+        await loadDashboardData();
+      } catch (err: any) {
+        console.error('LIFF restore error:', err);
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   if (loading) {
     return (
@@ -75,6 +123,44 @@ export default function DashboardPage() {
         <div className="text-center">
           <Loader2 className="w-8 h-8 animate-spin text-pink-500 mx-auto mb-3" />
           <p className="text-sm text-gray-500">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ===== ログインが必要な場合 =====
+  if (needsLogin) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col">
+        <nav className="bg-white border-b border-gray-100 px-4 py-3 flex items-center">
+          <button onClick={() => router.push('/')} className="flex items-center gap-2">
+            <Gift className="w-5 h-5 text-pink-500" />
+            <span className="font-bold text-gray-900 text-sm">CrowdBirthday</span>
+          </button>
+        </nav>
+        <div className="flex-1 flex flex-col items-center justify-center px-6">
+          <div className="text-6xl mb-6">🎁</div>
+          <h1 className="text-xl font-bold text-gray-900 mb-2">マイページ</h1>
+          <p className="text-sm text-gray-500 mb-8 text-center">
+            LINEでログインして、<br />あなたのキャンペーンを確認しましょう
+          </p>
+          <button
+            onClick={handleLineLogin}
+            disabled={loginLoading}
+            className="flex items-center justify-center gap-3 px-8 py-3.5 bg-[#06C755] text-white rounded-2xl font-bold hover:bg-[#05b34d] transition-all disabled:opacity-60"
+          >
+            {loginLoading ? (
+              <><Loader2 className="w-5 h-5 animate-spin" /> ログイン中...</>
+            ) : (
+              <><MessageCircle className="w-5 h-5" /> LINEでログイン</>
+            )}
+          </button>
+          <button
+            onClick={() => router.push('/campaign/new')}
+            className="mt-4 text-sm text-pink-600 font-semibold hover:underline"
+          >
+            新しくお祝いページを作る →
+          </button>
         </div>
       </div>
     );
@@ -93,12 +179,8 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navbar */}
       <nav className="bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between">
-        <button
-          onClick={() => router.push('/')}
-          className="flex items-center gap-2"
-        >
+        <button onClick={() => router.push('/')} className="flex items-center gap-2">
           <Gift className="w-5 h-5 text-pink-500" />
           <span className="font-bold text-gray-900 text-sm">CrowdBirthday</span>
         </button>
@@ -197,7 +279,6 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Create New Campaign Button */}
         {campaigns.length > 0 && (
           <div className="mt-6">
             <button
