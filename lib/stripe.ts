@@ -117,17 +117,22 @@ export async function handlePaymentComplete(sessionId: string): Promise<{
       .single();
 
     if (campaign && campaign.status === 'active' && campaign.wish_price) {
-      // Check total raised amount
+      // Check total raised via campaign_stats view
       const { data: stats } = await supabase
-        .rpc('get_campaign_by_slug', {
-          slug_param: '', // This won't work - we need a better approach
-        } as any);
+        .from('campaign_stats' as any)
+        .select('total_raised')
+        .eq('id', session.metadata.campaignId)
+        .single();
 
-      // Call function to check if campaign is funded
-      await supabase.rpc('handle_contribution_completion', {
-        campaign_uuid: session.metadata.campaignId,
-        amount_added: (session.amount_total || 0) / 100,
-      } as any);
+      const totalRaised = (stats?.total_raised || 0) + (session.amount_total || 0);
+
+      // If total raised meets target, update status to funded
+      if (totalRaised >= campaign.wish_price) {
+        await supabase
+          .from('campaigns' as any)
+          .update({ status: 'funded' })
+          .eq('id', session.metadata.campaignId);
+      }
     }
 
     return {

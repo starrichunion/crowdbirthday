@@ -30,7 +30,7 @@ const faqItems: FAQItem[] = [
     id: '2',
     question: '手数料はどのくらいかかりますか？',
     answer:
-      '企画者に対して、集まった金額の20%が手数料として差し引かれます。また、決済システム（Stripe）の手数料として約3.6% + 10円がかかります。振込手数料は銀行の規程に基づいて請求されます。',
+      'プラットフォーム手数料として、eGift購入金額の10%（税込）が発生します。また、決済システム（Stripe）の手数料として約3.6% + 40円/件がかかります。',
   },
   {
     id: '3',
@@ -296,17 +296,17 @@ export default function HowItWorksPage() {
           <div className="text-center mb-12">
             <h2 className="section-title">料金表</h2>
             <p className="section-subtitle">
-              企画者様向けの料金体系です
+              ご利用にかかる手数料のご案内です
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* Fee 1 */}
             <div className="bg-white rounded-xl p-6 border border-gray-200 text-center">
-              <p className="text-sm text-gray-600 mb-2 font-medium">企画者手数料</p>
-              <p className="text-4xl font-bold text-pink-600 mb-2">20%</p>
+              <p className="text-sm text-gray-600 mb-2 font-medium">プラットフォーム手数料</p>
+              <p className="text-4xl font-bold text-pink-600 mb-2">10%</p>
               <p className="text-gray-700">
-                集まった金額から差し引かれます
+                eGift購入金額から差し引かれます
               </p>
             </div>
 
@@ -317,7 +317,7 @@ export default function HowItWorksPage() {
               </p>
               <p className="text-4xl font-bold text-pink-600 mb-2">3.6%</p>
               <p className="text-gray-700">
-                Stripe決済 + 10円/件
+                Stripe決済 + 40円/件
               </p>
             </div>
 
@@ -337,11 +337,11 @@ export default function HowItWorksPage() {
               ¥100,000のお祝いが集まった場合：
             </p>
             <ul className="space-y-2 text-sm text-gray-700 ml-6 list-disc">
-              <li>企画者手数料 (20%): -¥20,000</li>
-              <li>決済手数料 (3.6% + 10円): -¥3,610</li>
+              <li>プラットフォーム手数料 (10%): -¥10,000</li>
+              <li>決済手数料 (3.6% + 40円): -¥3,640</li>
               <li>振込手数料: -¥数百円</li>
               <li>
-                <strong>企画者が受け取り額: ¥約76,000～77,000</strong>
+                <strong>受取人が受け取る額: 約¥86,000～87,000</strong>
               </li>
             </ul>
           </div>

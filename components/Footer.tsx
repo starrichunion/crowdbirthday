@@ -20,6 +20,9 @@ export default function Footer() {
             <Link href="/legal/privacy" className="text-gray-600 hover:text-pink-500 transition-colors">
               プライバシーポリシー
             </Link>
+            <Link href="/legal/tokushoho" className="text-gray-600 hover:text-pink-500 transition-colors">
+              特定商取引法表記
+            </Link>
             <Link href="mailto:hello@crowdbirthday.com" className="text-gray-600 hover:text-pink-500 transition-colors">
               お問い合わせ
             </Link>

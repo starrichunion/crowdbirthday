@@ -111,7 +111,7 @@ export default function TermsPage() {
               <strong>プラットフォーム手数料：</strong>eGift購入金額の10%（税込）
             </li>
             <li>
-              <strong>決済手数料：</strong>Stripeにより別途請求（目安：3.6% + 40円）
+              <strong>決済手数料：</strong>Stripeにより別途請求（約3.6% + 40円/件）
             </li>
           </ul>
           <p className="mt-4">
