@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
   try {
     const { sessionId } = await request.json();
 
-    if (\!sessionId || typeof sessionId \!== 'string') {
+    if (!sessionId || typeof sessionId !== 'string') {
       return NextResponse.json(
         { error: 'session_id is required' },
         { status: 400 }
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     const stripe = getStripeServer();
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-    if (session.payment_status \!== 'paid' || \!session.metadata) {
+    if (session.payment_status !== 'paid' || !session.metadata) {
       return NextResponse.json(
         { error: 'Payment not completed or missing metadata' },
         { status: 400 }
