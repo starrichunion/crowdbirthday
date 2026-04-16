@@ -3,6 +3,11 @@
  * Handles:
  * - checkout.session.completed: Create contribution, check if campaign funded
  * - charge.refunded: Mark contribution as refunded
+ *
+ * Idempotency:
+ *   Stripe may redeliver the same event on failure/delay. We INSERT the event.id
+ *   into webhook_events first — a unique-violation means we already processed it,
+ *   so we return 200 early without re-creating contributions.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -28,7 +33,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Verify webhook signature
   const isValid = verifyWebhookSignature(
     body,
     signature,
@@ -42,18 +46,52 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  let event: any;
   try {
-    const event = JSON.parse(body);
-    const result = await handleWebhookEvent(event) as any;
+    event = JSON.parse(body);
+  } catch (err) {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  // ==========================================================================
+  // Idempotency: try INSERT event.id into webhook_events.
+  // Success -> first time, continue. Unique violation (23505) -> already processed.
+  // ==========================================================================
+  const supabase = await createServerClient();
+  const { error: idempotencyError } = await supabase
+    .from('webhook_events')
+    .insert([
+      {
+        id: event.id,
+        event_type: event.type,
+        payload: event,
+      },
+    ]);
+
+  if (idempotencyError) {
+    if (idempotencyError.code === '23505') {
+      console.log('[webhook] duplicate event', event.id, 'skipping');
+      return NextResponse.json({
+        success: true,
+        action: 'already_processed',
+        event_id: event.id,
+      });
+    }
+    console.error('[webhook] idempotency insert failed:', idempotencyError);
+    return NextResponse.json(
+      { error: 'Failed to record webhook event' },
+      { status: 500 }
+    );
+  }
+
+  try {
+    const result = (await handleWebhookEvent(event)) as any;
 
     if (result.action === 'contribution_created') {
       const { metadata } = result;
-      const supabase = await createServerClient();
 
-      // Convert amount from cents to JPY (Stripe returns in cents)
       const amountJPY = Math.round((metadata.amount || 0) / 100);
 
-      // Create contribution record
       const { data: contribution, error: contributionError } = await supabase
         .from('contributions')
         .insert([
@@ -72,13 +110,13 @@ export async function POST(request: NextRequest) {
 
       if (contributionError) {
         console.error('Error creating contribution:', contributionError);
+        await markWebhookFailed(supabase, event.id, contributionError.message);
         return NextResponse.json(
           { error: 'Failed to create contribution record' },
           { status: 500 }
         );
       }
 
-      // Fetch campaign to get organizer info and wish price
       const { data: campaign, error: campaignError } = await supabase
         .from('campaigns')
         .select('id, organizer_id, wish_price, recipient_name')
@@ -93,7 +131,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Get total raised amount for this campaign
       const { data: stats, error: statsError } = await supabase
         .from('contributions')
         .select('amount')
@@ -113,23 +150,18 @@ export async function POST(request: NextRequest) {
         0
       );
 
-      // Check if campaign is now funded (total >= wish_price)
       let isFunded = false;
       if (campaign.wish_price && totalRaised >= campaign.wish_price) {
         isFunded = true;
-
-        // Update campaign status to 'funded'
         const { error: statusError } = await supabase
           .from('campaigns')
           .update({ status: 'funded' })
           .eq('id', metadata.campaignId);
-
         if (statusError) {
           console.error('Error updating campaign status:', statusError);
         }
       }
 
-      // Fetch organizer email
       const { data: organizer, error: organizerError } = await supabase
         .from('users')
         .select('email, display_name')
@@ -137,7 +169,6 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (!organizerError && organizer) {
-        // Send notification to organizer about new contribution
         await sendNewContributionNotification(
           organizer.email,
           campaign.recipient_name,
@@ -145,8 +176,6 @@ export async function POST(request: NextRequest) {
           metadata.contributorName,
           isFunded
         );
-
-        // If just funded, send additional notification
         if (isFunded) {
           await sendCampaignFundedNotification(
             organizer.email,
@@ -166,9 +195,7 @@ export async function POST(request: NextRequest) {
 
     if (result.action === 'contribution_refunded') {
       const { metadata } = result;
-      const supabase = await createServerClient();
 
-      // Update contribution status to refunded
       const { error } = await supabase
         .from('contributions')
         .update({ status: 'refunded' })
@@ -176,6 +203,7 @@ export async function POST(request: NextRequest) {
 
       if (error) {
         console.error('Error updating contribution status:', error);
+        await markWebhookFailed(supabase, event.id, error.message);
         return NextResponse.json(
           { error: 'Failed to update contribution' },
           { status: 500 }
@@ -188,21 +216,32 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Handle other event types silently
-    return NextResponse.json({
-      success: true,
-      action: result.action,
-    });
+    return NextResponse.json({ success: true, action: result.action });
   } catch (error) {
     console.error('Webhook processing error:', error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to process webhook',
-      },
-      { status: 500 }
-    );
+    const errorMessage =
+      error instanceof Error ? error.message : 'Failed to process webhook';
+    await markWebhookFailed(supabase, event.id, errorMessage);
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+/**
+ * Mark a webhook_events row as failed so that Stripe redelivery can retry.
+ * Without this, a failed processing attempt would be treated as "processed"
+ * and the retry would be rejected as a duplicate.
+ */
+async function markWebhookFailed(
+  supabase: any,
+  eventId: string,
+  errorMessage: string
+) {
+  try {
+    await supabase
+      .from('webhook_events')
+      .update({ status: 'failed', error_message: errorMessage })
+      .eq('id', eventId);
+  } catch (e) {
+    console.error('[webhook] failed to mark event as failed:', e);
   }
 }
